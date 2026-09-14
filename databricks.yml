@@ -1,0 +1,29 @@
+# St. Luke's CKD Production Solution - Databricks Asset Bundle
+# Deploy: databricks bundle deploy -t dev   (then bundle run <resource>)
+bundle:
+  name: stlukes-ckd-production
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: Target Unity Catalog for the ckd_prod schema and all assets.
+    default: slhs_test1
+  schema:
+    description: Target schema.
+    default: ckd_prod
+  warehouse_id:
+    description: SQL warehouse for SQL steps / dashboard / app.
+    default: 9946580e2a7f4dd1
+
+targets:
+  dev:
+    default: true
+    mode: development
+    workspace:
+      host: https://adb-447340683886633.13.azuredatabricks.net
+      profile: stlukes-workshop
+    variables:
+      catalog: slhs_test1
+      schema: ckd_prod
