@@ -55,52 +55,61 @@ def ask_genie(question: str):
             pass
     return (" ".join(text) or "(Genie returned no text answer.)"), sql, df
 
-@st.dialog("🩺 Ask about these CKD patients", width="large")
-def ask_dialog(prefill: str = ""):
-    st.caption("Plain-English questions on the **same governed CKD data** — answered by the CKD Genie agent. "
-               "The numbers match this worklist because both use the same metric view.")
-    for s in ["How many undocumented CKD patients are there?",
-              "Which providers have the most care-gap patients?",
-              "How many high-risk patients are not on kidney-protective meds?"]:
-        if st.button(s, key="samp_"+s):
-            st.session_state["genie_q"] = s
-    question = st.text_input("Your question", value=st.session_state.get("genie_q", prefill),
-                             placeholder="e.g., How many high-risk patients aren't seeing nephrology?")
-    if st.button("Ask Genie", type="primary") and question:
-        with st.spinner("Asking Genie…"):
-            try:
-                answer, sql, df = ask_genie(question)
-                st.markdown(f"**{answer}**")
-                if df is not None and not df.empty:
-                    st.dataframe(df, hide_index=True, use_container_width=True)
-                if sql:
-                    with st.expander("SQL Genie ran"):
-                        st.code(sql, language="sql")
-            except Exception as e:
-                st.warning(f"Couldn't reach the Genie agent from here ({type(e).__name__}). "
-                           f"Open the full agent: {GENIE_URL}")
+def genie_bubble():
+    """A persistent floating 'Ask Genie' chat bubble pinned to the bottom-right corner."""
+    st.markdown("""<style>
+    div[data-testid="stPopover"] { position: fixed !important; bottom: 26px; right: 26px; z-index: 1000; }
+    div[data-testid="stPopover"] button { border-radius: 26px; background: #FF3621; color: #fff;
+        border: none; font-weight: 600; padding: 10px 20px; box-shadow: 0 6px 18px rgba(0,0,0,.25); }
+    </style>""", unsafe_allow_html=True)
+    if "genie_chat" not in st.session_state:
+        st.session_state.genie_chat = []
+    with st.popover("💬  Ask Genie", use_container_width=False):
+        st.markdown("**Ask about these CKD patients**")
+        st.caption("Plain-English Q&A on the same governed data — answers match the worklist.")
+        history = st.container(height=280)          # rendered top; filled after we process input
+        with st.form("genie_form", clear_on_submit=True):
+            c1, c2 = st.columns([4, 1])
+            prompt = c1.text_input("q", label_visibility="collapsed",
+                                   placeholder="e.g., how many high-risk patients aren't on SGLT2?")
+            sent = c2.form_submit_button("Ask", use_container_width=True)
+        if not st.session_state.genie_chat:
+            history.caption("Try: “How many undocumented CKD patients are there?” · "
+                            "“Which providers have the most care gaps?”")
+        if sent and prompt:
+            st.session_state.genie_chat.append({"role": "user", "content": prompt})
+            with st.spinner("Asking Genie…"):
+                try:
+                    answer, sql, df = ask_genie(prompt)
+                    st.session_state.genie_chat.append({"role": "assistant", "content": answer, "sql": sql, "df": df})
+                except Exception as e:
+                    st.session_state.genie_chat.append({"role": "assistant",
+                        "content": f"Couldn't reach the Genie agent ({type(e).__name__}). Open it directly: {GENIE_URL}"})
+        for turn in st.session_state.genie_chat:                # render into the top container (no rerun -> stays open)
+            with history.chat_message(turn["role"]):
+                st.markdown(turn["content"])
+                if turn.get("df") is not None and not turn["df"].empty:
+                    st.dataframe(turn["df"], hide_index=True, use_container_width=True)
+                if turn.get("sql"):
+                    with st.expander("SQL"):
+                        st.code(turn["sql"], language="sql")
 
 st.title("🩺 CKD Identification & Risk Flagging")
 st.caption("St. Luke's Health System · labs, notes, and an ML model → a prioritized clinician worklist, "
            "with a governed path back to Epic. Ask questions in plain English, review the model's suggestions, act.")
 
-# --- Population: KPIs + Ask Genie ---
-top = st.columns([5,1])
+# --- Population: KPI tiles (Ask Genie lives in the floating corner bubble) ---
 k = q("""SELECT COUNT(DISTINCT patient_id) patients, SUM(CASE WHEN is_ckd THEN 1 ELSE 0 END) ckd,
   SUM(CASE WHEN undocumented_ckd THEN 1 ELSE 0 END) undoc, SUM(CASE WHEN possibly_mis_staged THEN 1 ELSE 0 END) mis,
   SUM(CASE WHEN high_risk_no_nephrology THEN 1 ELSE 0 END) hirisk, SUM(CASE WHEN advanced_not_on_protective_meds THEN 1 ELSE 0 END) nomeds
   FROM patient_ckd_analytics""")
-with top[0]:
-    if not k.empty:
-        c = st.columns(6)
-        for col,label,key in zip(c,["Patients","Have CKD","Undocumented","Mis-staged","High risk (no nephro)","Adv, no meds"],
-                                 ["patients","ckd","undoc","mis","hirisk","nomeds"]):
-            col.metric(label, f"{int(k.iloc[0][key]):,}")
-with top[1]:
-    st.write("");
-    if st.button("🔎 Ask Genie", use_container_width=True):
-        st.session_state["genie_q"] = ""
-        ask_dialog()
+if not k.empty:
+    c = st.columns(6)
+    for col,label,key in zip(c,["Patients","Have CKD","Undocumented","Mis-staged","High risk (no nephro)","Adv, no meds"],
+                             ["patients","ckd","undoc","mis","hirisk","nomeds"]):
+        col.metric(label, f"{int(k.iloc[0][key]):,}")
+
+genie_bubble()   # floating "Ask Genie" chat bubble, bottom-right, always available
 
 tab_work, tab_queue = st.tabs(["Worklist", "Epic write-back queue"])
 
@@ -130,8 +139,7 @@ with tab_work:
             trend = q(f"SELECT seq, value FROM bronze_lab_events WHERE patient_id='{pid}' AND analyte='egfr' AND encounter_type='outpatient' ORDER BY seq DESC")
             if not trend.empty:
                 trend["value"] = pd.to_numeric(trend["value"]); st.line_chart(trend.set_index("seq")["value"], height=180)
-            if st.button("🔎 Ask Genie about this cohort"):
-                ask_dialog(prefill=f"For {cohort.lower()} patients, ")
+            st.caption("Have a question these panels don't answer? Use the 💬 Ask Genie bubble (bottom-right).")
         with right:
             st.subheader("Review & write back to Epic")
             st.info("Approving records the clinician-confirmed stage in the governed write-back queue "
