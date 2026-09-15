@@ -1,0 +1,13 @@
+resources:
+  jobs:
+    ckd_train_model:
+      name: "[${bundle.target}] CKD - train + register stage-suggestion model"
+      tasks:
+        - task_key: train_stage_model
+          notebook_task:
+            notebook_path: ../ml/train_ckd_stage_model.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+      queue:
+        enabled: true
