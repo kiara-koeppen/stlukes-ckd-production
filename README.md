@@ -59,3 +59,15 @@ documented‑vs‑lab comparison is what surfaces missing/mis‑staged patients.
 
 ## Status
 Built incrementally and verified layer by layer. See commit history; this README tracks the design.
+
+## Deployed assets (dev target: slhs_test1.ckd_prod)
+- **Medallion**: `bronze_patient`, `bronze_lab_events`, `bronze_clinical_notes`, `silver_patient_labs`, `patient_ckd_gold`
+- **AI notes**: `note_ckd_signals`, `patient_note_signals`
+- **ML**: model `ckd_prod.ckd_stage_model` (UC), scores `patient_ckd_scored`, serving endpoint `ckd-stage-model`
+- **Semantic layer**: view `patient_ckd_analytics`, metric view `ckd_metrics`
+- **Genie agent**: "CKD Identification & Risk Flagging (Production)" — space `01f1b09e2ba113eda818aac6bf646a95`
+- **App**: `ckd-risk-worklist` → https://ckd-risk-worklist-447340683886633.13.azure.databricksapps.com
+- **Write-back queue**: `epic_writeback_queue` (human-in-the-loop → Epic integration point)
+- **Governance**: PK/FK (RELY), column comments, ABAC PHI mask on MRN (`mask_mrn`)
+- **Smoke test**: see `SMOKE_TEST.md` (11/11 passing)
+- **Demo cheat sheet**: Google Doc in the St Lukes workshop Drive folder
