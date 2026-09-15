@@ -6,3 +6,5 @@ env:
     value: "ckd_prod"
   - name: DATABRICKS_WAREHOUSE_ID
     value: "9946580e2a7f4dd1"
+  - name: GENIE_SPACE_ID
+    value: "01f1b09e2ba113eda818aac6bf646a95"
