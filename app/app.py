@@ -13,7 +13,6 @@ Conversation API for the Ask-Genie panel).
 import os, time, pandas as pd, streamlit as st
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState
-from databricks.sdk.service.dashboards import GenieFeedbackRating
 
 CATALOG = os.getenv("CATALOG", "slhs_test1")
 SCHEMA = os.getenv("SCHEMA", "ckd_prod")
@@ -101,6 +100,10 @@ def genie_bubble():
         # 👍/👎 on an answer — sent to the Genie space (same as the native agent's rating).
         cid, mid = turn.get("conv_id"), turn.get("msg_id")
         if not (cid and mid):
+            return
+        try:                                    # older SDKs lack the feedback API — hide, don't crash
+            from databricks.sdk.service.dashboards import GenieFeedbackRating
+        except Exception:
             return
         if turn.get("feedback"):
             st.caption("👍 Feedback sent to Genie." if turn["feedback"] == "POSITIVE" else "👎 Feedback sent to Genie.")
