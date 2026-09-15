@@ -10,7 +10,7 @@ embedded Genie agent answers ad-hoc questions on the SAME governed CKD data.
 Auth: uses the app's service principal via databricks-sdk (StatementExecution for SQL, Genie
 Conversation API for the Ask-Genie panel).
 """
-import os, pandas as pd, streamlit as st
+import os, time, pandas as pd, streamlit as st
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState
 
@@ -37,16 +37,38 @@ def exec_write(sql: str):
     w.statement_execution.execute_statement(warehouse_id=WAREHOUSE_ID, statement=sql,
                                             catalog=CATALOG, schema=SCHEMA, wait_timeout="50s")
 
-def ask_genie(question: str):
-    """Call the CKD Genie agent (Conversation API). Returns (answer_text, sql, dataframe)."""
-    msg = w.genie.start_conversation_and_wait(GENIE_SPACE_ID, question)
+# Friendly labels for Genie's live message-status stages (mirrors the native agent's "thinking").
+GENIE_STAGE = {
+    "SUBMITTED": "Sending your question to Genie…",
+    "FILTERING_CONTEXT": "Understanding the question…",
+    "FETCHING_METADATA": "Finding the right tables…",
+    "ASKING_AI": "Reasoning and writing SQL…",
+    "PENDING_WAREHOUSE": "Starting the SQL warehouse…",
+    "EXECUTING_QUERY": "Running the query on governed data…",
+    "COMPLETED": "Composing the answer…",
+}
+
+def ask_genie(question: str, on_status=None):
+    """Ask the CKD Genie agent, polling the message so the caller can surface Genie's live
+    stages (its 'thought process'). Returns (answer_text, sql, dataframe)."""
+    wait = w.genie.start_conversation(GENIE_SPACE_ID, question)
+    conv_id, msg_id = wait.conversation_id, wait.message_id
+    msg, seen = None, None
+    for _ in range(150):                       # ~3 min ceiling
+        msg = w.genie.get_message(GENIE_SPACE_ID, conv_id, msg_id)
+        code = msg.status.value if msg.status else ""
+        if on_status and code != seen:
+            on_status(GENIE_STAGE.get(code, code)); seen = code
+        if code in ("COMPLETED", "FAILED", "CANCELLED", "QUERY_RESULT_EXPIRED"):
+            break
+        time.sleep(1.2)
     text, sql, df = [], None, None
-    for att in (msg.attachments or []):
+    for att in (msg.attachments or []) if msg else []:
         if getattr(att, "text", None) and att.text.content: text.append(att.text.content)
         if getattr(att, "query", None) and att.query.query: sql = att.query.query
     if sql:
         try:
-            qr = w.genie.get_message_query_result(GENIE_SPACE_ID, msg.conversation_id, msg.id)
+            qr = w.genie.get_message_query_result(GENIE_SPACE_ID, conv_id, msg_id)
             sr = qr.statement_response
             if sr and sr.result and sr.result.data_array:
                 cols = [c.name for c in sr.manifest.schema.columns]
@@ -73,9 +95,10 @@ def genie_bubble():
         "What is the average model confidence by CKD stage?",
     ]
     with st.popover("💬  Ask Genie", use_container_width=False):
-        h1, h2 = st.columns([3, 1])
+        h1, h2, h3 = st.columns([2, 1.5, 1])
         h1.markdown("**Ask about these CKD patients**")
-        new_chat = h2.button("🔄 New chat", key="genie_new", use_container_width=True)
+        h2.link_button("↗ Open in Genie", GENIE_URL, use_container_width=True)  # the full native agent
+        new_chat = h3.button("🔄 New chat", key="genie_new", use_container_width=True)
         st.caption("Plain-English Q&A on the same governed data — answers match the worklist.")
         history = st.container(height=260)          # rendered on top; filled after we process input
         st.caption("Example questions (ask the live Genie agent · not shown by the tiles) — or type your own below:")
@@ -93,11 +116,13 @@ def genie_bubble():
             pending = None
         if pending:
             st.session_state.genie_chat.append({"role": "user", "content": pending})
-            with st.spinner("Asking Genie…"):
-                try:
-                    answer, sql, df = ask_genie(pending)   # example buttons + typed both hit the live Genie agent
+            with st.status("Asking Genie…", expanded=True) as status:
+                try:                                       # example buttons + typed both hit the live Genie agent
+                    answer, sql, df = ask_genie(pending, on_status=lambda label: status.update(label=f"💭 {label}"))
+                    status.update(label="Genie answered ✓", state="complete")
                     st.session_state.genie_chat.append({"role": "assistant", "content": answer, "sql": sql, "df": df})
                 except Exception as e:
+                    status.update(label="Genie hit an error", state="error")
                     st.session_state.genie_chat.append({"role": "assistant",
                         "content": f"Couldn't get an answer ({type(e).__name__}). Open the full Genie agent: {GENIE_URL}"})
         if not st.session_state.genie_chat:
@@ -108,7 +133,7 @@ def genie_bubble():
                 if turn.get("df") is not None and not turn["df"].empty:
                     st.dataframe(turn["df"], hide_index=True, use_container_width=True)
                 if turn.get("sql"):
-                    with st.expander("SQL"):
+                    with st.expander("🔎 The SQL Genie wrote"):
                         st.code(turn["sql"], language="sql")
 
 st.title("🩺 CKD Identification & Risk Flagging")
