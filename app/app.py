@@ -13,13 +13,16 @@ Conversation API for the Ask-Genie panel).
 import os, time, pandas as pd, streamlit as st
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState
+from databricks.sdk.service.dashboards import GenieFeedbackRating
 
 CATALOG = os.getenv("CATALOG", "slhs_test1")
 SCHEMA = os.getenv("SCHEMA", "ckd_prod")
 WAREHOUSE_ID = os.getenv("DATABRICKS_WAREHOUSE_ID", "9946580e2a7f4dd1")
 GENIE_SPACE_ID = os.getenv("GENIE_SPACE_ID", "01f1b09e2ba113eda818aac6bf646a95")
 HOST = os.getenv("DATABRICKS_HOST", "https://adb-447340683886633.13.azuredatabricks.net")
-GENIE_URL = f"{HOST}/genie/rooms/{GENIE_SPACE_ID}"
+if not HOST.startswith("http"):                 # Apps runtime sets DATABRICKS_HOST without a scheme
+    HOST = "https://" + HOST
+GENIE_URL = f"{HOST.rstrip('/')}/genie/rooms/{GENIE_SPACE_ID}"
 w = WorkspaceClient()
 st.set_page_config(page_title="CKD Risk Flagging", page_icon="🩺", layout="wide")
 
@@ -50,7 +53,7 @@ GENIE_STAGE = {
 
 def ask_genie(question: str, on_status=None):
     """Ask the CKD Genie agent, polling the message so the caller can surface Genie's live
-    stages (its 'thought process'). Returns (answer_text, sql, dataframe)."""
+    stages (its 'thought process'). Returns (answer_text, sql, dataframe, conv_id, msg_id)."""
     wait = w.genie.start_conversation(GENIE_SPACE_ID, question)
     conv_id, msg_id = wait.conversation_id, wait.message_id
     msg, seen = None, None
@@ -75,7 +78,7 @@ def ask_genie(question: str, on_status=None):
                 df = pd.DataFrame(sr.result.data_array, columns=cols)
         except Exception:
             pass
-    return (" ".join(text) or "(Genie returned no text answer.)"), sql, df
+    return (" ".join(text) or "(Genie returned no text answer.)"), sql, df, conv_id, msg_id
 
 def genie_bubble():
     """A persistent floating 'Ask Genie' chat bubble pinned to the bottom-right corner."""
@@ -94,6 +97,26 @@ def genie_bubble():
         "Break down undocumented CKD patients by KDIGO stage.",
         "What is the average model confidence by CKD stage?",
     ]
+    def feedback_controls(turn):
+        # 👍/👎 on an answer — sent to the Genie space (same as the native agent's rating).
+        cid, mid = turn.get("conv_id"), turn.get("msg_id")
+        if not (cid and mid):
+            return
+        if turn.get("feedback"):
+            st.caption("👍 Feedback sent to Genie." if turn["feedback"] == "POSITIVE" else "👎 Feedback sent to Genie.")
+            return
+        b1, b2, _ = st.columns([1, 1, 8])
+        clicked = "POSITIVE" if b1.button("👍", key=f"fb_up_{mid}", help="Helpful — send to Genie") else \
+                  "NEGATIVE" if b2.button("👎", key=f"fb_down_{mid}", help="Not helpful — send to Genie") else None
+        if clicked:
+            try:
+                w.genie.send_message_feedback(GENIE_SPACE_ID, cid, mid,
+                    GenieFeedbackRating.POSITIVE if clicked == "POSITIVE" else GenieFeedbackRating.NEGATIVE)
+            except Exception:
+                pass
+            turn["feedback"] = clicked
+            st.caption("✓ Sent to Genie — thanks!")
+
     def render_turn(container, turn):
         with container.chat_message(turn["role"]):
             st.markdown(turn["content"])
@@ -102,6 +125,8 @@ def genie_bubble():
             if turn.get("sql"):
                 with st.expander("🔎 The SQL Genie wrote"):
                     st.code(turn["sql"], language="sql")
+            if turn["role"] == "assistant":
+                feedback_controls(turn)
 
     with st.popover("💬  Ask Genie", use_container_width=False):
         h1, h2, h3 = st.columns([2, 1.5, 1])
@@ -138,23 +163,26 @@ def genie_bubble():
         if pending:
             with history.chat_message("user"):
                 st.markdown(pending)
+            a_turn = {"role": "assistant"}
             with history.chat_message("assistant"):
                 with st.status("Asking Genie…", expanded=True) as status:
                     try:                                   # example buttons + typed both hit the live agent
-                        answer, sql, df = ask_genie(pending, on_status=lambda label: status.update(label=f"💭 {label}"))
+                        answer, sql, df, cid, mid = ask_genie(pending, on_status=lambda label: status.update(label=f"💭 {label}"))
                         status.update(label="Genie answered ✓", state="complete", expanded=False)
                     except Exception as e:
                         status.update(label="Genie hit an error", state="error")
-                        answer, sql, df = (f"Couldn't get an answer ({type(e).__name__}). "
-                                           f"Open the full Genie agent: {GENIE_URL}"), None, None
+                        answer, sql, df, cid, mid = (f"Couldn't get an answer ({type(e).__name__}). "
+                                           f"Open the full Genie agent: {GENIE_URL}"), None, None, None, None
                 st.markdown(answer)
                 if df is not None and not df.empty:
                     st.dataframe(df, hide_index=True, use_container_width=True)
                 if sql:
                     with st.expander("🔎 The SQL Genie wrote"):
                         st.code(sql, language="sql")
+                a_turn.update({"content": answer, "sql": sql, "df": df, "conv_id": cid, "msg_id": mid})
+                feedback_controls(a_turn)
             st.session_state.genie_chat.append({"role": "user", "content": pending})
-            st.session_state.genie_chat.append({"role": "assistant", "content": answer, "sql": sql, "df": df})
+            st.session_state.genie_chat.append(a_turn)
 
 st.title("🩺 CKD Identification & Risk Flagging")
 st.caption("St. Luke's Health System · labs, notes, and an ML model → a prioritized clinician worklist, "
@@ -188,30 +216,44 @@ with tab_work:
     st.dataframe(wl, use_container_width=True, hide_index=True)
 
     if not wl.empty:
-        pid = st.selectbox("Open patient", wl["patient_id"].tolist())
-        d = wl[wl["patient_id"] == pid].iloc[0]
-        left, right = st.columns(2)
-        with left:
-            st.subheader(f"Patient {pid}")
-            st.write(f"**Age/Sex:** {d['age']} / {d['sex']}  ·  **Key meds:** {d['key_meds'] or 'none'}")
-            st.write(f"**Lab-derived KDIGO stage:** {d['lab_kdigo_stage']}  ·  **Mean eGFR:** {d['mean_egfr']}")
-            st.write(f"**Documented stage:** {d['documented_ckd']}")
-            st.write(f"**Model-suggested stage:** {d['suggested_stage']}  (confidence {d['model_confidence']})")
-            st.write(f"**Nephrology — structured:** {d['sees_nephrology']}  ·  **from notes (AI):** {d['note_says_nephrology']}")
-            trend = q(f"SELECT seq, value FROM bronze_lab_events WHERE patient_id='{pid}' AND analyte='egfr' AND encounter_type='outpatient' ORDER BY seq DESC")
-            if not trend.empty:
-                trend["value"] = pd.to_numeric(trend["value"]); st.line_chart(trend.set_index("seq")["value"], height=180)
-            st.caption("Have a question these panels don't answer? Use the 💬 Ask Genie bubble (bottom-right).")
-        with right:
-            st.subheader("Review & write back to Epic")
-            st.info("Approving records the clinician-confirmed stage in the governed write-back queue "
-                    "(the Epic integration point). Human-in-the-loop — nothing auto-writes to Epic.")
-            confirmed = st.selectbox("Confirmed CKD stage", ["G1","G2","G3a","G3b","G4","G5",str(d["suggested_stage"])], index=6)
-            refer = st.checkbox("Also flag for nephrology referral", value=bool(d["lab_kdigo_stage"] in ("G4","G5")))
-            if st.button("✅ Approve & queue for Epic", type="primary"):
-                exec_write(f"""INSERT INTO epic_writeback_queue (patient_id, confirmed_stage, refer_nephrology, reviewed_by, reviewed_at, status)
-                    VALUES ('{pid}', '{confirmed}', {str(bool(refer)).lower()}, current_user(), current_timestamp(), 'queued')""")
-                st.success(f"Queued stage {confirmed} for patient {pid} for Epic write-back.")
+        ids = wl["patient_id"].tolist()
+        csel, cpaste = st.columns([2, 1])
+        sel = csel.selectbox("Open patient", ids)          # searchable dropdown of the current cohort
+        pasted = cpaste.text_input("…or paste a patient ID", placeholder="any patient ID",
+                                   help="Jumps to any patient, even one outside this cohort").strip()
+        pid = pasted or sel
+        row = wl[wl["patient_id"] == pid]
+        if row.empty and pasted:                           # pasted ID not in this cohort — look it up directly
+            safe = pasted.replace("'", "''")
+            row = q(f"""SELECT patient_id, age, sex, lab_kdigo_stage, documented_ckd, suggested_stage, model_confidence,
+                          mean_egfr, egfr_trend_recent_minus_prior, sees_nephrology, note_says_nephrology, key_meds
+                       FROM patient_ckd_analytics WHERE patient_id = '{safe}'""")
+        if row.empty:
+            st.warning(f"No patient found with ID '{pid}'. Check the ID, or pick one from the list.")
+        else:
+            d = row.iloc[0]; pid = d["patient_id"]
+            left, right = st.columns(2)
+            with left:
+                st.subheader(f"Patient {pid}")
+                st.write(f"**Age/Sex:** {d['age']} / {d['sex']}  ·  **Key meds:** {d['key_meds'] or 'none'}")
+                st.write(f"**Lab-derived KDIGO stage:** {d['lab_kdigo_stage']}  ·  **Mean eGFR:** {d['mean_egfr']}")
+                st.write(f"**Documented stage:** {d['documented_ckd']}")
+                st.write(f"**Model-suggested stage:** {d['suggested_stage']}  (confidence {d['model_confidence']})")
+                st.write(f"**Nephrology — structured:** {d['sees_nephrology']}  ·  **from notes (AI):** {d['note_says_nephrology']}")
+                trend = q(f"SELECT seq, value FROM bronze_lab_events WHERE patient_id='{pid}' AND analyte='egfr' AND encounter_type='outpatient' ORDER BY seq DESC")
+                if not trend.empty:
+                    trend["value"] = pd.to_numeric(trend["value"]); st.line_chart(trend.set_index("seq")["value"], height=180)
+                st.caption("Have a question these panels don't answer? Use the 💬 Ask Genie bubble (bottom-right).")
+            with right:
+                st.subheader("Review & write back to Epic")
+                st.info("Approving records the clinician-confirmed stage in the governed write-back queue "
+                        "(the Epic integration point). Human-in-the-loop — nothing auto-writes to Epic.")
+                confirmed = st.selectbox("Confirmed CKD stage", ["G1","G2","G3a","G3b","G4","G5",str(d["suggested_stage"])], index=6)
+                refer = st.checkbox("Also flag for nephrology referral", value=bool(d["lab_kdigo_stage"] in ("G4","G5")))
+                if st.button("✅ Approve & queue for Epic", type="primary"):
+                    exec_write(f"""INSERT INTO epic_writeback_queue (patient_id, confirmed_stage, refer_nephrology, reviewed_by, reviewed_at, status)
+                        VALUES ('{pid}', '{confirmed}', {str(bool(refer)).lower()}, current_user(), current_timestamp(), 'queued')""")
+                    st.success(f"Queued stage {confirmed} for patient {pid} for Epic write-back.")
 
 with tab_queue:
     st.subheader("Pending Epic write-backs")
