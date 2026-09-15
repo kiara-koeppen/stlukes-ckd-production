@@ -64,27 +64,53 @@ def genie_bubble():
     </style>""", unsafe_allow_html=True)
     if "genie_chat" not in st.session_state:
         st.session_state.genie_chat = []
+    # Example questions the tiles/worklist do NOT already answer. Each maps to a trusted query so
+    # clicking returns instantly in the demo; free-typed questions go to the live Genie agent.
+    SUGGESTIONS = [
+        {"q": "Which providers have the most undocumented CKD patients?",
+         "sql": "SELECT assigned_provider_name AS provider, count(*) AS undocumented_ckd FROM patient_ckd_analytics WHERE undocumented_ckd = true GROUP BY assigned_provider_name ORDER BY undocumented_ckd DESC LIMIT 10"},
+        {"q": "Of the high-risk patients, how many are also not on kidney-protective meds?",
+         "sql": "SELECT count(*) AS high_risk_not_on_protective_meds FROM patient_ckd_analytics WHERE high_risk_no_nephrology = true AND on_kidney_protective_meds = false"},
+        {"q": "Break down undocumented CKD patients by KDIGO stage.",
+         "sql": "SELECT lab_kdigo_stage, count(*) AS patients FROM patient_ckd_analytics WHERE undocumented_ckd = true GROUP BY lab_kdigo_stage ORDER BY lab_kdigo_stage"},
+        {"q": "What is the average model confidence by CKD stage?",
+         "sql": "SELECT lab_kdigo_stage, round(avg(model_confidence),3) AS avg_confidence FROM patient_ckd_analytics WHERE is_ckd = true GROUP BY lab_kdigo_stage ORDER BY lab_kdigo_stage"},
+    ]
     with st.popover("💬  Ask Genie", use_container_width=False):
-        st.markdown("**Ask about these CKD patients**")
+        h1, h2 = st.columns([3, 1])
+        h1.markdown("**Ask about these CKD patients**")
+        new_chat = h2.button("🔄 New chat", key="genie_new", use_container_width=True)
         st.caption("Plain-English Q&A on the same governed data — answers match the worklist.")
-        history = st.container(height=280)          # rendered top; filled after we process input
+        history = st.container(height=260)          # rendered on top; filled after we process input
+        st.caption("Example questions (instant · not shown by the tiles) — or type your own below:")
+        pending = None
+        for i, s in enumerate(SUGGESTIONS):
+            if st.button(s["q"], key=f"genie_sugg_{i}", use_container_width=True):
+                pending = s
         with st.form("genie_form", clear_on_submit=True):
             c1, c2 = st.columns([4, 1])
-            prompt = c1.text_input("q", label_visibility="collapsed",
-                                   placeholder="e.g., how many high-risk patients aren't on SGLT2?")
-            sent = c2.form_submit_button("Ask", use_container_width=True)
-        if not st.session_state.genie_chat:
-            history.caption("Try: “How many undocumented CKD patients are there?” · "
-                            "“Which providers have the most care gaps?”")
-        if sent and prompt:
-            st.session_state.genie_chat.append({"role": "user", "content": prompt})
-            with st.spinner("Asking Genie…"):
+            typed = c1.text_input("q", label_visibility="collapsed", placeholder="…or type any question")
+            if c2.form_submit_button("Ask", use_container_width=True) and typed:
+                pending = {"q": typed, "sql": None}
+        if new_chat:
+            st.session_state.genie_chat = []
+            pending = None
+        if pending:
+            st.session_state.genie_chat.append({"role": "user", "content": pending["q"]})
+            with st.spinner("Working…"):
                 try:
-                    answer, sql, df = ask_genie(prompt)
-                    st.session_state.genie_chat.append({"role": "assistant", "content": answer, "sql": sql, "df": df})
+                    if pending.get("sql"):        # example question -> trusted query, instant
+                        df = q(pending["sql"])
+                        st.session_state.genie_chat.append({"role": "assistant",
+                            "content": "Here's what the trusted query returns:", "sql": pending["sql"], "df": df})
+                    else:                          # free-form -> live Genie agent
+                        answer, sql, df = ask_genie(pending["q"])
+                        st.session_state.genie_chat.append({"role": "assistant", "content": answer, "sql": sql, "df": df})
                 except Exception as e:
                     st.session_state.genie_chat.append({"role": "assistant",
-                        "content": f"Couldn't reach the Genie agent ({type(e).__name__}). Open it directly: {GENIE_URL}"})
+                        "content": f"Couldn't get an answer ({type(e).__name__}). Open the full Genie agent: {GENIE_URL}"})
+        if not st.session_state.genie_chat:
+            history.caption("Pick a suggested question or type your own to start.")
         for turn in st.session_state.genie_chat:                # render into the top container (no rerun -> stays open)
             with history.chat_message(turn["role"]):
                 st.markdown(turn["content"])
