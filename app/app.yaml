@@ -1,0 +1,8 @@
+command: ["streamlit", "run", "app.py"]
+env:
+  - name: CATALOG
+    value: "slhs_test1"
+  - name: SCHEMA
+    value: "ckd_prod"
+  - name: DATABRICKS_WAREHOUSE_ID
+    value: "9946580e2a7f4dd1"
