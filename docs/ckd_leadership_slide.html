@@ -1,0 +1,190 @@
+<title>CKD Solution Overview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --ground:#EBEFF1; --surface:#FFFFFF; --surface-2:#F4F7F8;
+    --ink:#132229; --muted:#57676F; --line:#D6DFE2;
+    --teal:#0E6E78; --teal-deep:#0A4A50; --teal-soft:#E1EEEF;
+    --accent:#FF3621; --accent-soft:#FFE7E1;
+    --good:#0C7C63;
+    --shadow:0 1px 2px rgba(19,34,41,.05), 0 6px 20px rgba(19,34,41,.06);
+    --font-display:"Archivo",-apple-system,"Segoe UI",sans-serif;
+    --font-body:"IBM Plex Sans",-apple-system,"Segoe UI",sans-serif;
+    --font-mono:"IBM Plex Mono",ui-monospace,"SF Mono",monospace;
+  }
+  :root:not([data-theme="light"]){ @media (prefers-color-scheme: dark){
+    --ground:#0B1519; --surface:#132329; --surface-2:#0F1E23;
+    --ink:#E9F1F2; --muted:#94A7AE; --line:#243940;
+    --teal:#4FC4CE; --teal-deep:#8FE0E6; --teal-soft:#12303668;
+    --accent:#FF6E57; --accent-soft:#3A1A1400;
+    --good:#4CC79F;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 26px rgba(0,0,0,.42);
+  }}
+  :root[data-theme="dark"]{
+    --ground:#0B1519; --surface:#132329; --surface-2:#0F1E23;
+    --ink:#E9F1F2; --muted:#94A7AE; --line:#243940;
+    --teal:#4FC4CE; --teal-deep:#8FE0E6; --teal-soft:#12303668;
+    --accent:#FF6E57; --accent-soft:#3A1A1400;
+    --good:#4CC79F;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 26px rgba(0,0,0,.42);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:var(--font-body); line-height:1.45;
+    -webkit-font-smoothing:antialiased;
+    display:flex; align-items:center; justify-content:center;
+    padding:clamp(14px,2.4vw,34px);
+  }
+  .slide{
+    width:100%; max-width:1180px; background:var(--surface);
+    border:1px solid var(--line); border-radius:16px; box-shadow:var(--shadow);
+    padding:clamp(20px,3vw,40px); overflow:hidden;
+    display:flex; flex-direction:column; gap:clamp(16px,2.2vh,26px);
+  }
+  /* ---- header ---- */
+  .eyebrow{
+    font-family:var(--font-mono); font-size:.72rem; font-weight:600;
+    letter-spacing:.14em; text-transform:uppercase; color:var(--teal);
+    display:flex; align-items:center; gap:.6em;
+  }
+  .eyebrow::before{content:""; width:26px; height:2px; background:var(--accent); display:inline-block}
+  h1{
+    font-family:var(--font-display); font-weight:800; color:var(--ink);
+    font-size:clamp(1.8rem,3.6vw,3rem); line-height:1.02; margin:.28em 0 .18em;
+    letter-spacing:-.015em; text-wrap:balance;
+  }
+  .sub{ font-size:clamp(.95rem,1.35vw,1.12rem); color:var(--muted); max-width:64ch; }
+  .sub b{ color:var(--ink); font-weight:600; }
+
+  /* ---- process spine ---- */
+  .flow{ display:flex; align-items:stretch; gap:0; flex-wrap:wrap; }
+  .step{
+    flex:1 1 0; min-width:200px; background:var(--surface-2);
+    border:1px solid var(--line); border-radius:12px; padding:clamp(13px,1.5vw,18px);
+    display:flex; flex-direction:column; gap:.5em;
+  }
+  .step.act{ border-color:var(--accent); background:var(--accent-soft); }
+  :root[data-theme="dark"] .step.act, :root:not([data-theme="light"]) .step.act{ background:var(--surface-2); }
+  .step .n{
+    font-family:var(--font-mono); font-size:.7rem; font-weight:600; color:#fff;
+    background:var(--teal); width:22px; height:22px; border-radius:6px;
+    display:grid; place-items:center;
+  }
+  .step.act .n{ background:var(--accent); }
+  .step h3{
+    font-family:var(--font-display); font-weight:700; font-size:clamp(.98rem,1.3vw,1.12rem);
+    margin:0; color:var(--ink); letter-spacing:-.01em;
+  }
+  .step p{ margin:0; font-size:clamp(.78rem,1vw,.9rem); color:var(--muted); }
+  .step p em{ color:var(--teal-deep); font-style:normal; font-weight:600; }
+  .arrow{
+    align-self:center; color:var(--teal); font-size:1.4rem; padding:0 .28em; flex:0 0 auto;
+    font-family:var(--font-display);
+  }
+  @media (max-width:720px){
+    .flow{ flex-direction:column; }
+    .step{ min-width:0; }
+    .arrow{ transform:rotate(90deg); padding:.1em 0; }
+  }
+
+  /* ---- impact band ---- */
+  .impact{
+    display:flex; flex-wrap:wrap; gap:clamp(10px,2vw,30px);
+    padding:clamp(12px,1.6vh,18px) clamp(14px,2vw,22px);
+    background:var(--teal-deep); border-radius:12px; color:#fff;
+  }
+  :root:not([data-theme="light"]) .impact, :root[data-theme="dark"] .impact{ background:#0B3438; }
+  .stat{ display:flex; flex-direction:column; gap:2px; }
+  .stat .v{ font-family:var(--font-mono); font-weight:600; font-size:clamp(1.3rem,2.2vw,1.9rem);
+    line-height:1; font-variant-numeric:tabular-nums; color:#fff; }
+  .stat .v .accent{ color:#FF8A73; }
+  .stat .l{ font-size:clamp(.68rem,.9vw,.78rem); color:#BFE0E2; letter-spacing:.01em; }
+
+  /* ---- databricks strip ---- */
+  .built{ display:flex; flex-direction:column; gap:.6em; }
+  .built .cap{
+    font-family:var(--font-mono); font-size:.68rem; font-weight:600; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--muted);
+  }
+  .chips{ display:flex; flex-wrap:wrap; gap:7px; }
+  .chip{
+    border:1px solid var(--line); border-radius:999px; padding:.32em .8em;
+    font-size:clamp(.72rem,.92vw,.82rem); background:var(--surface); color:var(--ink);
+    display:inline-flex; gap:.45em; align-items:baseline;
+  }
+  .chip b{ font-weight:600; }
+  .chip span{ color:var(--muted); font-size:.86em; }
+  .chip.mask b{ color:var(--teal); }
+
+  footer{
+    font-size:clamp(.68rem,.86vw,.76rem); color:var(--muted); border-top:1px solid var(--line);
+    padding-top:.9em; display:flex; justify-content:space-between; gap:1em; flex-wrap:wrap;
+  }
+  footer .hitl b{ color:var(--good); font-weight:600; }
+</style>
+
+<div class="slide">
+  <header>
+    <div class="eyebrow">St. Luke's Health System &nbsp;×&nbsp; Databricks · Art of the Possible</div>
+    <h1>Finding undiagnosed CKD, before it's missed</h1>
+    <p class="sub">Chronic kidney disease is often <b>undocumented or mis-staged in Epic</b> — finding it today means manual chart review across thousands of patients. This surfaces those patients automatically and closes the gap, with a <b>clinician always in the loop</b>.</p>
+  </header>
+
+  <div class="flow">
+    <div class="step">
+      <div class="n">1</div>
+      <h3>Governed data</h3>
+      <p>Outpatient <em>labs</em>, medications, clinical notes &amp; the Epic problem list — unified and governed in Unity Catalog.</p>
+    </div>
+    <div class="arrow" aria-hidden="true">→</div>
+    <div class="step">
+      <div class="n">2</div>
+      <h3>Identify &amp; suggest</h3>
+      <p><em>KDIGO stage</em> from lab trends, an <em>ML model</em> that suggests the stage + confidence, and AI that reads the notes for nephrology context.</p>
+    </div>
+    <div class="arrow" aria-hidden="true">→</div>
+    <div class="step">
+      <div class="n">3</div>
+      <h3>Clinician worklist</h3>
+      <p>A ranked review list in a Databricks App. The clinician opens a patient, sees the evidence, and <em>confirms or overrides</em> the stage.</p>
+    </div>
+    <div class="arrow" aria-hidden="true">→</div>
+    <div class="step act">
+      <div class="n">4</div>
+      <h3>Write back to Epic</h3>
+      <p>Approval lands in a <em>governed, human-in-the-loop queue</em> — drained to Epic's problem list via FHIR / HL7 in production.</p>
+    </div>
+  </div>
+
+  <div class="impact">
+    <div class="stat"><span class="v">2,000</span><span class="l">Patients screened</span></div>
+    <div class="stat"><span class="v">1,524</span><span class="l">Have CKD (by labs)</span></div>
+    <div class="stat"><span class="v"><span class="accent">518</span></span><span class="l">Undocumented in Epic</span></div>
+    <div class="stat"><span class="v">238</span><span class="l">High-risk, not seeing nephrology</span></div>
+    <div class="stat"><span class="v">~0.98</span><span class="l">Avg model confidence</span></div>
+  </div>
+
+  <div class="built">
+    <div class="cap">Built end-to-end on Databricks</div>
+    <div class="chips">
+      <span class="chip mask"><b>Unity Catalog</b><span>governance + PHI masking</span></span>
+      <span class="chip"><b>Lakeflow</b><span>bronze → silver → gold</span></span>
+      <span class="chip"><b>AI Functions</b><span>read clinical notes</span></span>
+      <span class="chip"><b>MLflow + Model Serving</b><span>CKD stage model</span></span>
+      <span class="chip"><b>Metric Views</b><span>governed KPIs</span></span>
+      <span class="chip"><b>Genie</b><span>plain-English Q&amp;A</span></span>
+      <span class="chip"><b>AI/BI Dashboards</b></span>
+      <span class="chip"><b>Databricks Apps</b><span>clinician worklist</span></span>
+      <span class="chip"><b>Lakebase</b><span>Epic write-back queue</span></span>
+    </div>
+  </div>
+
+  <footer>
+    <span class="hitl"><b>Human-in-the-loop</b> — nothing auto-writes to Epic; a clinician approves every change.</span>
+    <span>Synthetic data · art of the possible — not yet connected to Epic or validated for clinical use.</span>
+  </footer>
+</div>
