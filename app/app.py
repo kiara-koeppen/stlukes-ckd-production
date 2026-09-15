@@ -94,18 +94,30 @@ def genie_bubble():
         "Break down undocumented CKD patients by KDIGO stage.",
         "What is the average model confidence by CKD stage?",
     ]
+    def render_turn(container, turn):
+        with container.chat_message(turn["role"]):
+            st.markdown(turn["content"])
+            if turn.get("df") is not None and not turn["df"].empty:
+                st.dataframe(turn["df"], hide_index=True, use_container_width=True)
+            if turn.get("sql"):
+                with st.expander("🔎 The SQL Genie wrote"):
+                    st.code(turn["sql"], language="sql")
+
     with st.popover("💬  Ask Genie", use_container_width=False):
         h1, h2, h3 = st.columns([2, 1.5, 1])
         h1.markdown("**Ask about these CKD patients**")
         h2.link_button("↗ Open in Genie", GENIE_URL, use_container_width=True)  # the full native agent
         new_chat = h3.button("🔄 New chat", key="genie_new", use_container_width=True)
         st.caption("Plain-English Q&A on the same governed data — answers match the worklist.")
-        history = st.container(height=260)          # rendered on top; filled after we process input
-        st.caption("Example questions (ask the live Genie agent · not shown by the tiles) — or type your own below:")
+        history = st.container(height=320)          # the chat thread; thinking + answers land here
+
         pending = None
-        for i, s in enumerate(SUGGESTIONS):
-            if st.button(s, key=f"genie_sugg_{i}", use_container_width=True):
-                pending = s
+        # Example questions, collapsed into an expander to save space (open when the chat is empty).
+        with st.expander("💡 Example questions (ask the live Genie agent)",
+                         expanded=not st.session_state.genie_chat):
+            for i, s in enumerate(SUGGESTIONS):
+                if st.button(s, key=f"genie_sugg_{i}", use_container_width=True):
+                    pending = s
         with st.form("genie_form", clear_on_submit=True):
             c1, c2 = st.columns([4, 1])
             typed = c1.text_input("q", label_visibility="collapsed", placeholder="…or type any question")
@@ -114,27 +126,35 @@ def genie_bubble():
         if new_chat:
             st.session_state.genie_chat = []
             pending = None
-        if pending:
-            st.session_state.genie_chat.append({"role": "user", "content": pending})
-            with st.status("Asking Genie…", expanded=True) as status:
-                try:                                       # example buttons + typed both hit the live Genie agent
-                    answer, sql, df = ask_genie(pending, on_status=lambda label: status.update(label=f"💭 {label}"))
-                    status.update(label="Genie answered ✓", state="complete")
-                    st.session_state.genie_chat.append({"role": "assistant", "content": answer, "sql": sql, "df": df})
-                except Exception as e:
-                    status.update(label="Genie hit an error", state="error")
-                    st.session_state.genie_chat.append({"role": "assistant",
-                        "content": f"Couldn't get an answer ({type(e).__name__}). Open the full Genie agent: {GENIE_URL}"})
-        if not st.session_state.genie_chat:
+
+        # Render the existing thread first.
+        if not st.session_state.genie_chat and not pending:
             history.caption("Pick a suggested question or type your own to start.")
-        for turn in st.session_state.genie_chat:                # render into the top container (no rerun -> stays open)
-            with history.chat_message(turn["role"]):
-                st.markdown(turn["content"])
-                if turn.get("df") is not None and not turn["df"].empty:
-                    st.dataframe(turn["df"], hide_index=True, use_container_width=True)
-                if turn.get("sql"):
+        for turn in st.session_state.genie_chat:
+            render_turn(history, turn)
+
+        # Process a new question INSIDE the thread: the user bubble, then the assistant bubble whose
+        # live "thinking" status sits directly above where the answer lands.
+        if pending:
+            with history.chat_message("user"):
+                st.markdown(pending)
+            with history.chat_message("assistant"):
+                with st.status("Asking Genie…", expanded=True) as status:
+                    try:                                   # example buttons + typed both hit the live agent
+                        answer, sql, df = ask_genie(pending, on_status=lambda label: status.update(label=f"💭 {label}"))
+                        status.update(label="Genie answered ✓", state="complete", expanded=False)
+                    except Exception as e:
+                        status.update(label="Genie hit an error", state="error")
+                        answer, sql, df = (f"Couldn't get an answer ({type(e).__name__}). "
+                                           f"Open the full Genie agent: {GENIE_URL}"), None, None
+                st.markdown(answer)
+                if df is not None and not df.empty:
+                    st.dataframe(df, hide_index=True, use_container_width=True)
+                if sql:
                     with st.expander("🔎 The SQL Genie wrote"):
-                        st.code(turn["sql"], language="sql")
+                        st.code(sql, language="sql")
+            st.session_state.genie_chat.append({"role": "user", "content": pending})
+            st.session_state.genie_chat.append({"role": "assistant", "content": answer, "sql": sql, "df": df})
 
 st.title("🩺 CKD Identification & Risk Flagging")
 st.caption("St. Luke's Health System · labs, notes, and an ML model → a prioritized clinician worklist, "
