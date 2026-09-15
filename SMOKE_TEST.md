@@ -17,3 +17,5 @@ Run: 2026-09-14T19:47:36
 | Analytics view | PASS | 2000 rows, 2000 with model suggestion |
 | App write-back path (insert/read) | PASS | insert+read OK |
 | App running state | PASS | ACTIVE |
+
+| Model Serving endpoint (real-time) | PASS | ckd-stage-model READY; live inference on a sample advanced-CKD patient returned "CKD 4" |
