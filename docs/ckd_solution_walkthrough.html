@@ -1,0 +1,268 @@
+<title>CKD Solution Walkthrough</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --ground:#EBEFF1; --surface:#FFFFFF; --surface-2:#F4F7F8;
+    --ink:#132229; --muted:#57676F; --line:#D6DFE2;
+    --teal:#0E6E78; --teal-deep:#0A4A50; --teal-soft:#E4F0F1;
+    --accent:#FF3621; --accent-soft:#FFEDE9; --accent-deep:#C22A18;
+    --good:#0C7C63;
+    --shadow:0 1px 2px rgba(19,34,41,.05), 0 8px 24px rgba(19,34,41,.07);
+    --font-display:"Archivo",-apple-system,"Segoe UI",sans-serif;
+    --font-body:"IBM Plex Sans",-apple-system,"Segoe UI",sans-serif;
+    --font-mono:"IBM Plex Mono",ui-monospace,"SF Mono",monospace;
+  }
+  :root:not([data-theme="light"]){ @media (prefers-color-scheme: dark){
+    --ground:#0B1519; --surface:#132329; --surface-2:#0F1E23;
+    --ink:#E9F1F2; --muted:#94A7AE; --line:#243940;
+    --teal:#4FC4CE; --teal-deep:#8FE0E6; --teal-soft:#12303655;
+    --accent:#FF6E57; --accent-soft:#2A130E; --accent-deep:#FF8A73;
+    --good:#4CC79F;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.45);
+  }}
+  :root[data-theme="dark"]{
+    --ground:#0B1519; --surface:#132329; --surface-2:#0F1E23;
+    --ink:#E9F1F2; --muted:#94A7AE; --line:#243940;
+    --teal:#4FC4CE; --teal-deep:#8FE0E6; --teal-soft:#12303655;
+    --accent:#FF6E57; --accent-soft:#2A130E; --accent-deep:#FF8A73;
+    --good:#4CC79F;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.45);
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none !important}   /* beats .panel{display:grid} when opened as a local file */
+  html,body{min-height:100%}
+  body{
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:var(--font-body); line-height:1.45; -webkit-font-smoothing:antialiased;
+    display:flex; align-items:center; justify-content:center; padding:clamp(14px,2.2vw,30px);
+  }
+  .slide{
+    width:100%; max-width:1200px; background:var(--surface);
+    border:1px solid var(--line); border-radius:16px; box-shadow:var(--shadow);
+    padding:clamp(20px,2.8vw,38px); display:flex; flex-direction:column; gap:clamp(14px,2vh,22px);
+  }
+  .eyebrow{
+    font-family:var(--font-mono); font-size:.72rem; font-weight:600; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--teal); display:flex; align-items:center; gap:.6em;
+  }
+  .eyebrow::before{content:""; width:26px; height:2px; background:var(--accent)}
+  h1{
+    font-family:var(--font-display); font-weight:800; color:var(--ink);
+    font-size:clamp(1.6rem,3.1vw,2.6rem); line-height:1.03; margin:.26em 0 .14em;
+    letter-spacing:-.015em; text-wrap:balance;
+  }
+  .sub{ font-size:clamp(.92rem,1.25vw,1.06rem); color:var(--muted); max-width:66ch; }
+  .sub b{ color:var(--ink); font-weight:600; }
+  .hint{ font-family:var(--font-mono); font-size:.72rem; color:var(--accent-deep); letter-spacing:.02em; display:flex; align-items:center; gap:.5em; }
+  .hint::before{ content:"▸"; }
+
+  /* ---- clickable process spine ---- */
+  .flow{ display:flex; align-items:stretch; gap:0; flex-wrap:wrap; }
+  .step{
+    flex:1 1 0; min-width:180px; text-align:left; cursor:pointer; font-family:var(--font-body);
+    background:var(--surface-2); border:1.5px solid var(--line); border-radius:12px;
+    padding:clamp(12px,1.4vw,16px); display:flex; flex-direction:column; gap:.4em;
+    transition:border-color .15s, background .15s, transform .15s, box-shadow .15s; color:var(--ink);
+  }
+  .step:hover{ transform:translateY(-2px); box-shadow:var(--shadow); }
+  .step:focus-visible{ outline:2px solid var(--teal); outline-offset:2px; }
+  .step[aria-selected="true"]{ border-color:var(--teal); background:var(--teal-soft); }
+  .step[aria-selected="true"][data-step="4"]{ border-color:var(--accent); background:var(--accent-soft); }
+  .step .top{ display:flex; align-items:center; gap:.5em; }
+  .step .n{
+    font-family:var(--font-mono); font-size:.72rem; font-weight:600; color:#fff; background:var(--teal);
+    width:22px; height:22px; border-radius:6px; display:grid; place-items:center; flex:0 0 auto;
+  }
+  .step[data-step="4"] .n{ background:var(--accent); }
+  .step h3{ font-family:var(--font-display); font-weight:700; font-size:clamp(.94rem,1.2vw,1.06rem);
+    margin:0; color:var(--ink); letter-spacing:-.01em; }
+  .step p{ margin:0; font-size:clamp(.76rem,.95vw,.86rem); color:var(--muted); }
+  .arrow{ align-self:center; color:var(--teal); font-size:1.35rem; padding:0 .25em; flex:0 0 auto; font-family:var(--font-display); }
+  @media (max-width:760px){
+    .flow{ flex-direction:column; } .step{ min-width:0; } .arrow{ transform:rotate(90deg); padding:.06em 0; }
+  }
+
+  /* ---- detail panel ---- */
+  .detail{ border:1px solid var(--line); border-left:4px solid var(--teal); border-radius:12px;
+    background:var(--surface); padding:clamp(16px,2vw,24px); min-height:220px; }
+  .detail[data-active="4"]{ border-left-color:var(--accent); }
+  .panel{ display:grid; grid-template-columns:1.4fr 1fr; gap:clamp(16px,2.4vw,34px); }
+  @media (max-width:760px){ .panel{ grid-template-columns:1fr; gap:16px; } }
+  .panel .lead{ font-family:var(--font-display); font-weight:700; font-size:clamp(1.05rem,1.5vw,1.25rem);
+    color:var(--ink); margin:0 0 .5em; letter-spacing:-.01em; }
+  .panel .what{ font-size:clamp(.85rem,1.1vw,.95rem); color:var(--muted); margin:0 0 1em; }
+  .panel ul{ margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:.6em; }
+  .panel li{ font-size:clamp(.82rem,1.05vw,.92rem); color:var(--ink); padding-left:1.3em; position:relative; }
+  .panel li::before{ content:""; position:absolute; left:0; top:.55em; width:7px; height:7px; border-radius:2px;
+    background:var(--teal); }
+  .panel[data-p="4"] li::before{ background:var(--accent); }
+  .panel li b{ font-weight:600; color:var(--teal-deep); }
+  .panel[data-p="4"] li b{ color:var(--accent-deep); }
+  .uses{ background:var(--surface-2); border:1px solid var(--line); border-radius:10px; padding:14px 16px; align-self:start; }
+  .uses .cap{ font-family:var(--font-mono); font-size:.64rem; font-weight:600; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--muted); margin-bottom:.7em; }
+  .uses .tag{ display:block; font-size:clamp(.8rem,1vw,.9rem); padding:.3em 0; border-top:1px solid var(--line); }
+  .uses .tag:first-of-type{ border-top:none; }
+  .uses .tag b{ font-weight:600; color:var(--ink); }
+  .uses .tag span{ color:var(--muted); }
+
+  /* ---- built strip ---- */
+  .built{ display:flex; flex-direction:column; gap:.55em; }
+  .built .cap{ font-family:var(--font-mono); font-size:.66rem; font-weight:600; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--muted); }
+  .chips{ display:flex; flex-wrap:wrap; gap:6px; }
+  .chip{ border:1px solid var(--line); border-radius:999px; padding:.3em .75em; font-size:clamp(.7rem,.9vw,.8rem);
+    background:var(--surface); color:var(--ink); }
+  .chip b{ font-weight:600; } .chip span{ color:var(--muted); font-size:.88em; }
+  .chip.mask b{ color:var(--teal); }
+  footer{ font-size:clamp(.68rem,.85vw,.75rem); color:var(--muted); border-top:1px solid var(--line);
+    padding-top:.85em; display:flex; justify-content:space-between; gap:1em; flex-wrap:wrap; }
+  footer .hitl b{ color:var(--good); font-weight:600; }
+  @media (prefers-reduced-motion: reduce){ .step{ transition:none; } }
+</style>
+
+<div class="slide">
+  <header>
+    <div class="eyebrow">St. Luke's Health System &nbsp;×&nbsp; Databricks · Art of the Possible</div>
+    <h1>How we find undiagnosed CKD — end to end</h1>
+    <p class="sub">Chronic kidney disease is often <b>undocumented or mis-staged in Epic</b>. Here's the whole pipeline, from governed data to a clinician-approved write-back — <span class="hint" style="display:inline-flex">click a step to see what happens and how</span></p>
+  </header>
+
+  <div class="flow" role="tablist" aria-label="CKD solution steps">
+    <button class="step" role="tab" data-step="1" aria-selected="false" aria-controls="p1">
+      <div class="top"><span class="n">1</span><h3>Governed data</h3></div>
+      <p>Labs, meds, notes &amp; the Epic problem list, unified.</p>
+    </button>
+    <div class="arrow" aria-hidden="true">→</div>
+    <button class="step" role="tab" data-step="2" aria-selected="false" aria-controls="p2">
+      <div class="top"><span class="n">2</span><h3>Identify &amp; suggest</h3></div>
+      <p>KDIGO from labs + an ML model + AI on the notes.</p>
+    </button>
+    <div class="arrow" aria-hidden="true">→</div>
+    <button class="step" role="tab" data-step="3" aria-selected="false" aria-controls="p3">
+      <div class="top"><span class="n">3</span><h3>Clinician worklist</h3></div>
+      <p>A ranked review list; the clinician decides.</p>
+    </button>
+    <div class="arrow" aria-hidden="true">→</div>
+    <button class="step" role="tab" data-step="4" aria-selected="false" aria-controls="p4">
+      <div class="top"><span class="n">4</span><h3>Write back to Epic</h3></div>
+      <p>A governed, human-in-the-loop queue → Epic.</p>
+    </button>
+  </div>
+
+  <div class="detail" data-active="1">
+    <div class="panel" id="p1" role="tabpanel" data-p="1">
+      <div>
+        <p class="lead">Unify the raw clinical signals — and govern every column.</p>
+        <p class="what">Everything downstream reads one governed source, so the app, dashboards, and Genie always agree.</p>
+        <ul>
+          <li>A <b>Lakeflow medallion pipeline</b> lands raw feeds in <b>bronze</b>, cleans and types them in <b>silver</b>, and rolls them up to a patient-level <b>gold</b> table.</li>
+          <li>Sources: outpatient <b>eGFR / creatinine / albuminuria</b>, medications, free-text clinical notes, and the Epic problem-list status.</li>
+          <li><b>Unity Catalog</b> governs it all — lineage, primary/foreign keys, column comments, and <b>ABAC masking</b> on PHI (MRN shows as <code>MRN-***-****</code>).</li>
+        </ul>
+      </div>
+      <div class="uses">
+        <div class="cap">Databricks in this step</div>
+        <span class="tag"><b>Unity Catalog</b> <span>— governance, lineage, PHI masking</span></span>
+        <span class="tag"><b>Lakeflow</b> <span>— bronze → silver → gold</span></span>
+        <span class="tag"><b>Delta Lake</b> <span>— the governed tables</span></span>
+      </div>
+    </div>
+
+    <div class="panel" id="p2" role="tabpanel" data-p="2" hidden>
+      <div>
+        <p class="lead">Stage every patient from their labs — and flag the gaps, with confidence.</p>
+        <p class="what">Rules do the identifying; the model and the notes add decision support, not a black-box diagnosis.</p>
+        <ul>
+          <li><b>KDIGO stage</b> is computed from each patient's mean outpatient eGFR (G1 ≥90 → G5 &lt;15), excluding inpatient labs.</li>
+          <li>That lab-derived stage is compared to what's <b>documented in Epic</b> → flags for <b>undocumented</b> and <b>possibly mis-staged</b> CKD.</li>
+          <li>An <b>MLflow model</b> suggests the stage + a <b>confidence score</b>; it's registered in Unity Catalog, served on <b>Model Serving</b>, and batch-scored into gold.</li>
+          <li><b>AI Functions</b> (<code>ai_query</code>) read the free-text notes to catch nephrology involvement the structured data misses.</li>
+        </ul>
+      </div>
+      <div class="uses">
+        <div class="cap">Databricks in this step</div>
+        <span class="tag"><b>AI Functions</b> <span>— read clinical notes</span></span>
+        <span class="tag"><b>MLflow + Model Serving</b> <span>— CKD stage model</span></span>
+        <span class="tag"><b>Metric Views</b> <span>— governed KPI rollups</span></span>
+      </div>
+    </div>
+
+    <div class="panel" id="p3" role="tabpanel" data-p="3" hidden>
+      <div>
+        <p class="lead">Put the right patients in front of a clinician, with the evidence to decide.</p>
+        <p class="what">This is what replaces manual chart review — the model did the first pass; the clinician makes the call.</p>
+        <ul>
+          <li>A <b>Databricks App</b> reads the governed gold table through a <b>SQL warehouse</b> (the app's service principal — no data leaves governance).</li>
+          <li>Pick a cohort — undocumented, high-risk without nephrology, rapid eGFR decline — and open a patient to see the <b>eGFR trend, lab-derived stage, model suggestion + confidence, meds, and nephrology status</b>.</li>
+          <li>An embedded <b>Genie agent</b> answers plain-English follow-ups on the <b>same governed data</b>, so its numbers match the worklist.</li>
+        </ul>
+      </div>
+      <div class="uses">
+        <div class="cap">Databricks in this step</div>
+        <span class="tag"><b>Databricks Apps</b> <span>— the clinician worklist</span></span>
+        <span class="tag"><b>Genie</b> <span>— plain-English Q&amp;A</span></span>
+        <span class="tag"><b>AI/BI Dashboards</b> <span>— population view</span></span>
+      </div>
+    </div>
+
+    <div class="panel" id="p4" role="tabpanel" data-p="4" hidden>
+      <div>
+        <p class="lead">Record the clinician's confirmed stage — and route it back to Epic, safely.</p>
+        <p class="what">Nothing auto-writes. A clinician approves every change, and every action is audited.</p>
+        <ul>
+          <li>On <b>Approve</b>, the app writes one row to a governed <b>write-back queue</b> (Lakebase / Delta): patient, confirmed stage, referral flag, reviewer, timestamp.</li>
+          <li>In production, a <b>Databricks Job</b> drains that queue into <b>Epic's problem list</b> via <b>FHIR</b> (a Condition resource) or <b>HL7</b> through the integration layer.</li>
+          <li>The clinician stays in the loop on both ends; the queue is fully <b>audited in Unity Catalog</b>.</li>
+        </ul>
+      </div>
+      <div class="uses">
+        <div class="cap">Databricks in this step</div>
+        <span class="tag"><b>Lakebase</b> <span>— the Epic write-back queue</span></span>
+        <span class="tag"><b>Databricks Jobs</b> <span>— drains to Epic (FHIR/HL7)</span></span>
+        <span class="tag"><b>Unity Catalog</b> <span>— audit of every change</span></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="built">
+    <div class="cap">Built end-to-end on Databricks</div>
+    <div class="chips">
+      <span class="chip mask"><b>Unity Catalog</b> <span>governance + PHI masking</span></span>
+      <span class="chip"><b>Lakeflow</b> <span>medallion</span></span>
+      <span class="chip"><b>AI Functions</b></span>
+      <span class="chip"><b>MLflow + Model Serving</b></span>
+      <span class="chip"><b>Metric Views</b></span>
+      <span class="chip"><b>Genie</b></span>
+      <span class="chip"><b>AI/BI Dashboards</b></span>
+      <span class="chip"><b>Databricks Apps</b></span>
+      <span class="chip"><b>Lakebase</b> <span>write-back queue</span></span>
+    </div>
+  </div>
+
+  <footer>
+    <span class="hitl"><b>Human-in-the-loop</b> — a clinician approves every change; nothing auto-writes to Epic.</span>
+    <span>Synthetic data · art of the possible — not yet connected to Epic or validated for clinical use.</span>
+  </footer>
+</div>
+
+<script>
+  const steps = Array.from(document.querySelectorAll('.step'));
+  const panels = Array.from(document.querySelectorAll('.panel'));
+  const detail = document.querySelector('.detail');
+  function select(n){
+    steps.forEach(s => { const on = s.dataset.step === n; s.setAttribute('aria-selected', on ? 'true' : 'false'); s.tabIndex = on ? 0 : -1; });
+    panels.forEach(p => { p.hidden = p.dataset.p !== n; });
+    detail.dataset.active = n;
+  }
+  steps.forEach(s => s.addEventListener('click', () => select(s.dataset.step)));
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    const cur = steps.findIndex(s => s.getAttribute('aria-selected') === 'true');
+    const next = (cur + (e.key === 'ArrowRight' ? 1 : -1) + steps.length) % steps.length;
+    select(steps[next].dataset.step); steps[next].focus();
+  });
+  select('1');
+</script>
