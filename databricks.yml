@@ -1,5 +1,7 @@
 # St. Luke's CKD Production Solution - Databricks Asset Bundle
-# Deploy: databricks bundle deploy -t dev   (then bundle run <resource>)
+# Deploy (reference/FEVM):        databricks bundle deploy -t dev
+# Deploy (your own workspace):    fill in the `prod` target below, then  databricks bundle deploy -t prod
+# See README.md → "Deploy in your own workspace" for the full step-by-step.
 bundle:
   name: stlukes-ckd-production
 
@@ -8,16 +10,17 @@ include:
 
 variables:
   catalog:
-    description: Target Unity Catalog for the ckd_prod schema and all assets.
+    description: Target Unity Catalog. NOTE - the pipeline/*.sql files currently hardcode slhs_test1.ckd_prod; this var is consumed by the train-model job. See README for retargeting the SQL.
     default: slhs_test1
   schema:
     description: Target schema.
     default: ckd_prod
   warehouse_id:
-    description: SQL warehouse for SQL steps / dashboard / app.
+    description: A serverless / Pro SQL warehouse for SQL steps, the dashboard, and the app.
     default: 9946580e2a7f4dd1
 
 targets:
+  # ---- Reference build in the FEVM demo workspace ----
   dev:
     default: true
     mode: development
@@ -27,3 +30,17 @@ targets:
     variables:
       catalog: slhs_test1
       schema: ckd_prod
+      warehouse_id: 9946580e2a7f4dd1
+
+  # ---- Template for deploying in YOUR OWN workspace (e.g. St. Luke's) ----
+  # Fill in the four placeholders below, then: databricks bundle deploy -t prod
+  # (You also retarget pipeline/*.sql + app/app.yaml — see README "Deploy in your own workspace".)
+  prod:
+    mode: production
+    workspace:
+      host: https://REPLACE-with-your-workspace-host        # e.g. https://your-org.cloud.databricks.com
+      profile: REPLACE-with-your-cli-profile                # a profile from `databricks auth profiles`
+    variables:
+      catalog: REPLACE-with-your-catalog
+      schema: ckd_prod
+      warehouse_id: REPLACE-with-your-serverless-sql-warehouse-id

@@ -55,7 +55,46 @@ documented‑vs‑lab comparison is what surfaces missing/mis‑staged patients.
 - "Write back to Epic" is implemented as a governed **approval queue / integration point** (there is
   no Epic in this environment) — the pattern leadership needs to see, ready to wire to Epic's
   HL7/FHIR or app‑orchard APIs.
-- Target: `slhs_test1` catalog, `ckd_prod` schema. Parameterized via the DAB `catalog` variable.
+- Target: `slhs_test1` catalog, `ckd_prod` schema. The DAB `catalog`/`schema` vars drive the train-model
+  job; the `pipeline/*.sql` still hardcode the catalog/schema (see "Deploy in your own workspace").
+
+## Deploy in your own workspace
+This repo is a **reference build** wired to a Databricks demo workspace (catalog `slhs_test1`) on
+**synthetic** data. Standing it up elsewhere (e.g., a St. Luke's workspace) is a guided setup, not a
+one-command deploy — here's the honest sequence.
+
+**Prerequisites:** Databricks CLI ≥ 0.239, Unity Catalog, a **serverless / Pro SQL warehouse**, and
+permissions to create schemas, jobs, models, and apps. For `ai_forecast` and doc-Q&A, enable the
+**Predictive AI Functions** and **Genie-on-Volumes** previews (Settings → Previews).
+
+1. **Auth to your workspace** — `databricks auth login --host https://<your-host>` and note the profile name.
+2. **Point the bundle at your workspace** — edit the `prod` target in `databricks.yml`: set `host`,
+   `profile`, `catalog`, `schema`, `warehouse_id` (the four `REPLACE-…` placeholders).
+3. **Seed + build the tables** ⚠️ *the one manual step*. `pipeline/*.sql` currently **hardcodes**
+   `slhs_test1.ckd_prod` and reads its synthetic source from `slhs_test1.clinical.ckd_patient_registry`.
+   To run elsewhere you must: (a) load an equivalent patient registry into your catalog (the synthetic
+   generator lives in the `stlukes-workshop-data` repo), and (b) find-and-replace `slhs_test1.ckd_prod`
+   → `<your_catalog>.<your_schema>` (and the `slhs_test1.clinical.ckd_patient_registry` source) across
+   `pipeline/*.sql` + `ai_functions/*.sql`, then run them **in order** (01→06) in the SQL editor.
+   *(Ask for the fully-parameterized version if you'd rather not hand-edit — see "Not yet automated".)*
+4. **Deploy the bundle** — `databricks bundle deploy -t prod` (creates the train-model job + the app).
+5. **Train + serve the model** — `databricks bundle run ckd_train_model -t prod` (registers the model in
+   UC and, per the notebook, sets up serving + batch scores).
+6. **Create your Genie space** on your gold tables (`patient_ckd_analytics`, `ckd_metrics`), grab its
+   space ID, and set it — plus `CATALOG` / `SCHEMA` / `DATABRICKS_WAREHOUSE_ID` — in **`app/app.yaml`**;
+   then `databricks bundle run ckd_worklist -t prod` to (re)deploy the app.
+7. **(Optional)** attach the `clinical_guidelines` volume to your Genie space for doc Q&A.
+
+**Going from synthetic to real data:** replace the step-3 seed with ingestion from Epic —
+**Lakeflow Connect** off Clarity/Caboodle, or HL7/FHIR feeds — landing into bronze; then wire the
+`epic_writeback_queue` to Epic (FHIR `Condition` write / HL7) with a clinician-accept step. This is the
+productionization boundary; the demo stops at the governed, approved queue.
+
+### Not yet automated (good next steps for a real handoff)
+- **Parameterize `pipeline/*.sql` + `ai_functions/*.sql`** (remove the hardcoded `slhs_test1.ckd_prod`)
+  and wrap them in a Lakeflow pipeline / job so `bundle deploy -t prod` builds the data end-to-end.
+- **Move the app's `GENIE_SPACE_ID` / catalog / schema into the DAB** so they don't need a separate
+  `app.yaml` edit.
 
 ## Status
 Built incrementally and verified layer by layer. See commit history; this README tracks the design.
