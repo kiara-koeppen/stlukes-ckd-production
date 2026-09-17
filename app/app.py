@@ -302,6 +302,16 @@ with tab_work:
                 st.write(f"**AI notes CKD-risk:** {str(d['notes_ckd_risk']).upper()}  ·  **Fusion CKD-risk score (labs+notes):** {d['ckd_risk_score']}")
                 if str(d.get('caught_by_notes')).lower() == 'true':
                     st.warning("🔬 **Caught by the notes** — normal labs; the AI's reading of the notes is what surfaced this CKD risk.")
+                # The physician note is the evidence the reviewer needs to read before confirming — show it.
+                note = q(f"SELECT note_text FROM bronze_clinical_notes WHERE patient_id='{pid}'")
+                ind  = q(f"SELECT notes_ckd_risk, notes_indicators FROM patient_ckd_analytics WHERE patient_id='{pid}'")
+                with st.expander("📄 Physician note — read what the AI read",
+                                 expanded=str(d.get('caught_by_notes')).lower() == 'true'):
+                    st.markdown(f"> {note.iloc[0]['note_text']}" if not note.empty and note.iloc[0]['note_text']
+                                else "_No note on file for this patient._")
+                    if not ind.empty:
+                        st.caption(f"**AI read this as** {str(ind.iloc[0]['notes_ckd_risk']).upper()} CKD risk  ·  "
+                                   f"**indicators it flagged:** {ind.iloc[0]['notes_indicators']}")
                 trend = q(f"SELECT seq, value FROM bronze_lab_events WHERE patient_id='{pid}' AND analyte='egfr' AND encounter_type='outpatient' ORDER BY seq DESC")
                 if not trend.empty:
                     trend["value"] = pd.to_numeric(trend["value"]); st.line_chart(trend.set_index("seq")["value"], height=180)
