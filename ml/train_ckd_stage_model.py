@@ -67,3 +67,61 @@ sdf = spark.createDataFrame(scored)
 sdf.write.mode("overwrite").option("overwriteSchema","true").saveAsTable(f"{CATALOG}.{SCHEMA}.patient_ckd_scored")
 spark.sql(f"ALTER TABLE {CATALOG}.{SCHEMA}.patient_ckd_scored SET TBLPROPERTIES ('comment'='ML stage suggestions: suggested_stage + confidence per patient from the CKD stage model.')")
 print("wrote", f"{CATALOG}.{SCHEMA}.patient_ckd_scored", sdf.count())
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## CKD-risk model — FUSION of structured labs + the AI notes signal
+# MAGIC The clinician's ask taken further: CKD is often *hidden* — at eGFR>=60 it requires a damage
+# MAGIC marker (proteinuria) that frequently lives in the **clinical notes**, not a structured lab.
+# MAGIC So we take the LLM-derived notes CKD-risk signal (`patient_note_signals`) and feed it, **with the
+# MAGIC labs**, into a classifier that predicts `has_ckd`. We compare a **labs-only baseline** (eGFR-based,
+# MAGIC no albuminuria) against the **labs+notes fusion**, and flag patients the notes *caught* that the
+# MAGIC labs alone would have missed.
+
+# COMMAND ----------
+from sklearn.metrics import roc_auc_score
+rdf = spark.table(f"{CATALOG}.{SCHEMA}.patient_ckd_gold").select(
+    "patient_id","age","mean_egfr","latest_egfr","prior_egfr",
+    "egfr_trend_recent_minus_prior","mean_creatinine","has_ckd").toPandas()
+notes = spark.table(f"{CATALOG}.{SCHEMA}.patient_note_signals").select("patient_id","notes_ckd_risk_ord").toPandas()
+rdf = rdf.merge(notes, on="patient_id", how="left")
+rdf["notes_ckd_risk_ord"] = pd.to_numeric(rdf["notes_ckd_risk_ord"], errors="coerce").fillna(0).astype(int)
+rdf["y"] = rdf["has_ckd"].astype(int)
+LAB    = ["age","mean_egfr","latest_egfr","prior_egfr","egfr_trend_recent_minus_prior","mean_creatinine"]  # no albuminuria: the damage marker lives in the notes
+FUSION = LAB + ["notes_ckd_risk_ord"]
+Xtr,Xte,ytr,yte = train_test_split(rdf, rdf["y"], test_size=0.25, random_state=7, stratify=rdf["y"])
+def fit_eval(feats):
+    m = RandomForestClassifier(n_estimators=300,max_depth=10,random_state=7,class_weight="balanced").fit(Xtr[feats],ytr)
+    p = m.predict_proba(Xte[feats])[:,1]; pred=(p>=0.5).astype(int); border = Xte["mean_egfr"]>=60
+    met = {"auc":round(roc_auc_score(yte,p),3),"f1":round(f1_score(yte,pred),3),"acc":round(accuracy_score(yte,pred),3),
+           "borderline_recall": round(float(((pred[border.values]==1)&(yte[border.values]==1)).sum())/max(1,int((yte[border.values]==1).sum())),3)}
+    if border.sum()>5 and yte[border.values].nunique()>1: met["borderline_auc"]=round(roc_auc_score(yte[border.values],p[border.values]),3)
+    return m, met
+base_m, base_metrics = fit_eval(LAB)
+fus_m,  fus_metrics  = fit_eval(FUSION)
+print("BASELINE labs-only :", base_metrics)
+print("FUSION labs+notes  :", fus_metrics)
+
+# COMMAND ----------
+mlflow.set_experiment(f"/Users/{spark.sql('select current_user()').first()[0]}/ckd_risk_model")
+RISK_MODEL = f"{CATALOG}.{SCHEMA}.ckd_risk_model"
+with mlflow.start_run(run_name="ckd_risk_fusion"):
+    m = RandomForestClassifier(n_estimators=300,max_depth=10,random_state=7,class_weight="balanced").fit(rdf[FUSION],rdf["y"])
+    mlflow.log_metrics({f"baseline_{k}":v for k,v in base_metrics.items()})
+    mlflow.log_metrics({f"fusion_{k}":v for k,v in fus_metrics.items()})
+    imp = {k:round(float(v),3) for k,v in zip(FUSION, m.feature_importances_)}
+    mlflow.log_dict(imp,"feature_importance.json"); print("feature importance:", imp)
+    sig = mlflow.models.infer_signature(rdf[FUSION], m.predict(rdf[FUSION]))
+    mlflow.sklearn.log_model(m,"model",signature=sig,input_example=rdf[FUSION].head(3),registered_model_name=RISK_MODEL)
+print("registered:", RISK_MODEL)
+
+# COMMAND ----------
+# Batch-score CKD risk (fusion) + what labs-only would have said → "caught_by_notes"
+rdf["ckd_risk_score"]     = m.predict_proba(rdf[FUSION])[:,1].round(3)
+rdf["ckd_risk_pred"]      = (rdf["ckd_risk_score"]>=0.5)
+rdf["ckd_risk_labs_only"] = base_m.predict_proba(rdf[LAB])[:,1].round(3)
+rdf["caught_by_notes"]    = (rdf["ckd_risk_pred"]) & (rdf["ckd_risk_labs_only"]<0.5)
+out = spark.createDataFrame(rdf[["patient_id","ckd_risk_score","ckd_risk_pred","ckd_risk_labs_only","caught_by_notes","notes_ckd_risk_ord"]])
+out.write.mode("overwrite").option("overwriteSchema","true").saveAsTable(f"{CATALOG}.{SCHEMA}.patient_ckd_risk_scored")
+spark.sql(f"ALTER TABLE {CATALOG}.{SCHEMA}.patient_ckd_risk_scored SET TBLPROPERTIES ('comment'='Fusion CKD-risk: score/pred from labs+AI notes signal, labs-only comparison, and caught_by_notes (labs missed, notes caught).')")
+print("wrote", f"{CATALOG}.{SCHEMA}.patient_ckd_risk_scored", out.count(), "| caught_by_notes:", int(rdf["caught_by_notes"].sum()))

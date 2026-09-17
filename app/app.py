@@ -39,6 +39,52 @@ def exec_write(sql: str):
     w.statement_execution.execute_statement(warehouse_id=WAREHOUSE_ID, statement=sql,
                                             catalog=CATALOG, schema=SCHEMA, wait_timeout="50s")
 
+RISK_MODEL_ENDPOINT = os.getenv("CKD_RISK_ENDPOINT", "ckd-risk-model")
+RISK_ORD = {"none": 0, "low": 1, "moderate": 2, "high": 3}
+# The editable "CKD-from-notes definition" — the prompt the AI uses to judge a note. Reviewers can tune it.
+NOTE_RISK_PROMPT_DEFAULT = (
+    "You are a nephrology-aware clinician reviewing an outpatient note that may NOT mention kidney disease by name. "
+    "Judge ONLY from indirect evidence: proteinuria or foamy urine, ankle or periorbital edema, rising or elevated "
+    "creatinine, poorly controlled hypertension, poorly controlled diabetes, nocturia, fatigue, nausea or poor appetite. "
+    "Assess this patient's risk of having undiagnosed chronic kidney disease. Respond with ONLY minified JSON: "
+    '{"ckd_risk":"none|low|moderate|high","indicators":["short phrases you found"],"rationale":"one sentence"}.')
+
+def run_note_ai(prompt: str, note_text: str) -> dict:
+    """Run the (editable) CKD-from-notes prompt over a note via ai_query, live on the warehouse."""
+    import json as _json, re as _re
+    p, n = prompt.replace("'", "''"), (note_text or "").replace("'", "''")
+    df = q(f"SELECT ai_query('databricks-meta-llama-3-3-70b-instruct', concat('{p}', ' Note: ', '{n}')) AS resp")
+    if df.empty:
+        return {}
+    m = _re.search(r"\{.*\}", df.iloc[0]["resp"] or "", _re.S)
+    try:
+        return _json.loads(m.group(0)) if m else {}
+    except Exception:
+        return {}
+
+def extract_note_text(f) -> str:
+    """Read an uploaded .txt or .pdf note to text."""
+    if f is None:
+        return ""
+    if f.name.lower().endswith(".pdf"):
+        try:
+            from pypdf import PdfReader
+            return "\n".join((pg.extract_text() or "") for pg in PdfReader(f).pages).strip()
+        except Exception as e:
+            return f"(Could not read PDF: {type(e).__name__})"
+    try:
+        return f.read().decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+def predict_ckd_risk(features: dict):
+    """Query the fusion (labs + notes) risk-model serving endpoint. Returns the prediction or None."""
+    try:
+        r = w.serving_endpoints.query(RISK_MODEL_ENDPOINT, dataframe_records=[features])
+        return r.predictions[0]
+    except Exception:
+        return None
+
 # Friendly labels for Genie's live message-status stages (mirrors the native agent's "thinking").
 GENIE_STAGE = {
     "SUBMITTED": "Sending your question to Genie…",
@@ -193,29 +239,40 @@ st.caption("St. Luke's Health System · labs, notes, and an ML model → a prior
 
 # --- Population: KPI tiles (Ask Genie lives in the floating corner bubble) ---
 k = q("""SELECT COUNT(DISTINCT patient_id) patients, SUM(CASE WHEN is_ckd THEN 1 ELSE 0 END) ckd,
-  SUM(CASE WHEN undocumented_ckd THEN 1 ELSE 0 END) undoc, SUM(CASE WHEN possibly_mis_staged THEN 1 ELSE 0 END) mis,
-  SUM(CASE WHEN high_risk_no_nephrology THEN 1 ELSE 0 END) hirisk, SUM(CASE WHEN advanced_not_on_protective_meds THEN 1 ELSE 0 END) nomeds
+  SUM(CASE WHEN undocumented_ckd THEN 1 ELSE 0 END) undoc,
+  SUM(CASE WHEN high_risk_no_nephrology THEN 1 ELSE 0 END) hirisk,
+  SUM(CASE WHEN notes_risk_flag THEN 1 ELSE 0 END) notesrisk,
+  SUM(CASE WHEN caught_by_notes THEN 1 ELSE 0 END) caught
   FROM patient_ckd_analytics""")
 if not k.empty:
     c = st.columns(6)
-    for col,label,key in zip(c,["Patients","Have CKD","Undocumented","Mis-staged","High risk (no nephro)","Adv, no meds"],
-                             ["patients","ckd","undoc","mis","hirisk","nomeds"]):
-        col.metric(label, f"{int(k.iloc[0][key]):,}")
+    for col,label,key,helptext in zip(c,
+        ["Patients","Have CKD","Undocumented","High risk (no nephro)","Notes flag CKD","Caught by notes"],
+        ["patients","ckd","undoc","hirisk","notesrisk","caught"],
+        ["","by labs","CKD by labs, not in Epic","advanced, not seeing nephrology",
+         "AI read the notes and flagged CKD risk","normal labs — only the notes caught it"]):
+        col.metric(label, f"{int(k.iloc[0][key]):,}", help=helptext or None)
 
 genie_bubble()   # floating "Ask Genie" chat bubble, bottom-right, always available
 
-tab_work, tab_queue = st.tabs(["Worklist", "Epic write-back queue"])
+tab_work, tab_analyzer, tab_queue = st.tabs(["Worklist", "🔬 Notes → CKD analyzer", "Epic write-back queue"])
 
 with tab_work:
-    cohort = st.selectbox("Cohort (model-flagged)", ["Undocumented CKD","Possibly mis-staged","High risk (no nephrology)",
-                          "Advanced, not on protective meds","Rapid eGFR decline","All CKD patients"])
-    where = {"Undocumented CKD":"undocumented_ckd","Possibly mis-staged":"possibly_mis_staged",
-             "High risk (no nephrology)":"high_risk_no_nephrology","Advanced, not on protective meds":"advanced_not_on_protective_meds",
+    cohort = st.selectbox("Cohort (model-flagged)", ["Caught by notes (occult CKD)","Undocumented CKD","Notes flagged at-risk",
+                          "High risk (no nephrology)","Possibly mis-staged","Advanced, not on protective meds",
+                          "Rapid eGFR decline","All CKD patients"])
+    where = {"Caught by notes (occult CKD)":"caught_by_notes","Undocumented CKD":"undocumented_ckd",
+             "Notes flagged at-risk":"notes_risk_flag","High risk (no nephrology)":"high_risk_no_nephrology",
+             "Possibly mis-staged":"possibly_mis_staged","Advanced, not on protective meds":"advanced_not_on_protective_meds",
              "Rapid eGFR decline":"rapid_egfr_decline","All CKD patients":"is_ckd"}[cohort]
-    wl = q(f"""SELECT patient_id, age, sex, lab_kdigo_stage, documented_ckd, suggested_stage, model_confidence,
-                 mean_egfr, egfr_trend_recent_minus_prior, sees_nephrology, note_says_nephrology, key_meds
-              FROM patient_ckd_analytics WHERE {where} ORDER BY mean_egfr ASC LIMIT 500""")
-    st.write(f"**{len(wl)} patients** · {cohort} — each row carries the model's **suggested stage + confidence**.")
+    if cohort == "Caught by notes (occult CKD)":
+        st.info("**These patients have normal-looking kidney labs** (e.g. eGFR ≥90, no albuminuria on record) — a labs-only "
+                "approach misses them. The AI read their clinical notes, found indirect signs, and the model flagged them. "
+                "This is CKD **hidden in the notes**.")
+    wl = q(f"""SELECT patient_id, age, sex, lab_kdigo_stage, documented_ckd, notes_ckd_risk, ckd_risk_score,
+                 suggested_stage, model_confidence, mean_egfr, sees_nephrology, key_meds, caught_by_notes
+              FROM patient_ckd_analytics WHERE {where} ORDER BY ckd_risk_score DESC LIMIT 500""")
+    st.write(f"**{len(wl)} patients** · {cohort} — each row shows the **AI notes-risk** and the **fusion CKD-risk score** (labs + notes).")
     st.dataframe(wl, use_container_width=True, hide_index=True)
 
     if not wl.empty:
@@ -228,8 +285,8 @@ with tab_work:
         row = wl[wl["patient_id"] == pid]
         if row.empty and pasted:                           # pasted ID not in this cohort — look it up directly
             safe = pasted.replace("'", "''")
-            row = q(f"""SELECT patient_id, age, sex, lab_kdigo_stage, documented_ckd, suggested_stage, model_confidence,
-                          mean_egfr, egfr_trend_recent_minus_prior, sees_nephrology, note_says_nephrology, key_meds
+            row = q(f"""SELECT patient_id, age, sex, lab_kdigo_stage, documented_ckd, notes_ckd_risk, ckd_risk_score,
+                          suggested_stage, model_confidence, mean_egfr, sees_nephrology, key_meds, caught_by_notes
                        FROM patient_ckd_analytics WHERE patient_id = '{safe}'""")
         if row.empty:
             st.warning(f"No patient found with ID '{pid}'. Check the ID, or pick one from the list.")
@@ -242,7 +299,9 @@ with tab_work:
                 st.write(f"**Lab-derived KDIGO stage:** {d['lab_kdigo_stage']}  ·  **Mean eGFR:** {d['mean_egfr']}")
                 st.write(f"**Documented stage:** {d['documented_ckd']}")
                 st.write(f"**Model-suggested stage:** {d['suggested_stage']}  (confidence {d['model_confidence']})")
-                st.write(f"**Nephrology — structured:** {d['sees_nephrology']}  ·  **from notes (AI):** {d['note_says_nephrology']}")
+                st.write(f"**AI notes CKD-risk:** {str(d['notes_ckd_risk']).upper()}  ·  **Fusion CKD-risk score (labs+notes):** {d['ckd_risk_score']}")
+                if str(d.get('caught_by_notes')).lower() == 'true':
+                    st.warning("🔬 **Caught by the notes** — normal labs; the AI's reading of the notes is what surfaced this CKD risk.")
                 trend = q(f"SELECT seq, value FROM bronze_lab_events WHERE patient_id='{pid}' AND analyte='egfr' AND encounter_type='outpatient' ORDER BY seq DESC")
                 if not trend.empty:
                     trend["value"] = pd.to_numeric(trend["value"]); st.line_chart(trend.set_index("seq")["value"], height=180)
@@ -257,6 +316,71 @@ with tab_work:
                     exec_write(f"""INSERT INTO epic_writeback_queue (patient_id, confirmed_stage, refer_nephrology, reviewed_by, reviewed_at, status)
                         VALUES ('{pid}', '{confirmed}', {str(bool(refer)).lower()}, current_user(), current_timestamp(), 'queued')""")
                     st.success(f"Queued stage {confirmed} for patient {pid} for Epic write-back.")
+
+with tab_analyzer:
+    st.subheader("Notes → CKD analyzer")
+    st.caption("Reviewer tool: pull a patient's labs, drop in a clinical note, and let the AI read the note for indirect "
+               "signs of CKD — then the model fuses that with the labs. Tune the definition the AI uses, live.")
+    la, lb = st.columns(2)
+    with la:
+        apid = st.text_input("Patient ID — pull their labs", placeholder="e.g. ACO-…").strip()
+        labrow = None
+        if apid:
+            safe = apid.replace("'", "''")
+            labrow = q(f"""SELECT patient_id, age, sex, mean_egfr, latest_egfr, prior_egfr, egfr_trend_recent_minus_prior,
+                             mean_creatinine, albuminuria_cat, lab_kdigo_stage, documented_ckd
+                          FROM patient_ckd_analytics WHERE patient_id='{safe}'""")
+            if labrow.empty:
+                st.warning("No patient with that ID."); labrow = None
+            else:
+                Lr = labrow.iloc[0]
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Mean eGFR", Lr["mean_egfr"]); m2.metric("Creatinine", Lr["mean_creatinine"])
+                m3.metric("Albuminuria", Lr["albuminuria_cat"])
+                st.caption(f"Lab-derived stage **{Lr['lab_kdigo_stage']}** · documented **{Lr['documented_ckd']}**")
+                tr = q(f"SELECT seq, value FROM bronze_lab_events WHERE patient_id='{safe}' AND analyte='egfr' AND encounter_type='outpatient' ORDER BY seq DESC")
+                if not tr.empty:
+                    tr["value"] = pd.to_numeric(tr["value"]); st.line_chart(tr.set_index("seq")["value"], height=150)
+    with lb:
+        up = st.file_uploader("Upload a clinical note (.txt or .pdf)", type=["txt", "pdf"])
+        note_text = extract_note_text(up) if up is not None else ""
+        note_text = st.text_area("…or paste the note text", value=note_text, height=170,
+                                 placeholder="Paste an outpatient note — the AI infers CKD risk from indirect signs.")
+    with st.expander("⚙️ CKD-from-notes definition — the prompt the AI uses (edit to tune what counts as suspicious)"):
+        prompt = st.text_area("Definition", value=st.session_state.get("note_prompt", NOTE_RISK_PROMPT_DEFAULT), height=180)
+        st.session_state["note_prompt"] = prompt
+    if st.button("🔬 Analyze note + labs", type="primary"):
+        if not note_text.strip():
+            st.warning("Paste or upload a note first.")
+        else:
+            with st.spinner("AI reading the note…"):
+                res = run_note_ai(st.session_state.get("note_prompt", NOTE_RISK_PROMPT_DEFAULT), note_text)
+            risk = str(res.get("ckd_risk", "unknown")).lower()
+            st.markdown(f"### AI notes read: **{risk.upper()}** CKD risk")
+            if res.get("rationale"): st.write(f"_{res['rationale']}_")
+            if res.get("indicators"): st.write("**Indicators found:** " + ", ".join(res["indicators"]))
+            if labrow is not None:
+                Lr = labrow.iloc[0]
+                feat = {"age": float(Lr["age"]), "mean_egfr": float(Lr["mean_egfr"]),
+                        "latest_egfr": float(Lr["latest_egfr"]), "prior_egfr": float(Lr["prior_egfr"]),
+                        "egfr_trend_recent_minus_prior": float(Lr["egfr_trend_recent_minus_prior"]),
+                        "mean_creatinine": float(Lr["mean_creatinine"]), "notes_ckd_risk_ord": RISK_ORD.get(risk, 0)}
+                pred = predict_ckd_risk(feat)
+                if pred is None:
+                    st.info("Fusion model endpoint is warming up (scale-to-zero) — try again in ~30s, or rely on the AI read + labs above.")
+                else:
+                    flagged = str(pred).strip() in ("1", "1.0", "true", "True")
+                    st.markdown(f"### Fusion model (labs + this note): **{'⚠️ CKD RISK' if flagged else 'not flagged'}**")
+                    st.caption(f"Feature sent to the model — eGFR {feat['mean_egfr']}, creatinine {feat['mean_creatinine']}, "
+                               f"notes-risk **{risk}**. The notes signal is what lets the model catch CKD when the labs look normal.")
+                    if flagged:
+                        refer2 = st.checkbox("Also flag for nephrology referral", key="an_refer")
+                        if st.button("✅ Approve & queue this patient for Epic", key="an_approve"):
+                            exec_write(f"""INSERT INTO epic_writeback_queue (patient_id, confirmed_stage, refer_nephrology, reviewed_by, reviewed_at, status)
+                                VALUES ('{apid.replace("'","''")}', 'flagged-from-notes', {str(bool(refer2)).lower()}, current_user(), current_timestamp(), 'queued')""")
+                            st.success(f"Queued {apid} for Epic write-back (flagged via notes + labs).")
+            else:
+                st.info("Enter a patient ID above to also run the fusion model (labs + this note).")
 
 with tab_queue:
     st.subheader("Pending Epic write-backs")
