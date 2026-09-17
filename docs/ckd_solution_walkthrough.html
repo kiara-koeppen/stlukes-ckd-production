@@ -55,6 +55,11 @@
   }
   .sub{ font-size:clamp(.92rem,1.25vw,1.06rem); color:var(--muted); max-width:66ch; }
   .sub b{ color:var(--ink); font-weight:600; }
+  .stats{ display:flex; flex-wrap:wrap; gap:clamp(14px,2.6vw,32px); margin-top:.7em; }
+  .stats .s{ display:flex; flex-direction:column; }
+  .stats .v{ font-family:var(--font-mono); font-weight:600; font-size:clamp(1.1rem,1.9vw,1.5rem); color:var(--ink); line-height:1; }
+  .stats .v.hot{ color:var(--accent-deep); }
+  .stats .l{ font-size:.72rem; color:var(--muted); margin-top:3px; }
   .hint{ font-family:var(--font-mono); font-size:.72rem; color:var(--accent-deep); letter-spacing:.02em; display:flex; align-items:center; gap:.5em; }
   .hint::before{ content:"▸"; }
 
@@ -126,24 +131,30 @@
 <div class="slide">
   <header>
     <div class="eyebrow">St. Luke's Health System &nbsp;×&nbsp; Databricks · Art of the Possible</div>
-    <h1>How we find undiagnosed CKD — end to end</h1>
-    <p class="sub">Chronic kidney disease is often <b>undocumented or mis-staged in Epic</b>. Here's the whole pipeline, from governed data to a clinician-approved write-back — <span class="hint" style="display:inline-flex">click a step to see what happens and how</span></p>
+    <h1>Finding CKD that's hidden in the notes</h1>
+    <p class="sub">CKD is often undocumented in Epic — and sometimes <b>invisible in the labs</b>, showing up only in the physician's notes. Here's the whole pipeline: an AI reads the notes, a model <b>fuses that with the labs</b>, and a clinician confirms the write-back to Epic. <span class="hint" style="display:inline-flex">click a step to see what happens and how</span></p>
+    <div class="stats">
+      <div class="s"><span class="v">2,000</span><span class="l">patients screened</span></div>
+      <div class="s"><span class="v">1,627</span><span class="l">have CKD</span></div>
+      <div class="s"><span class="v">621</span><span class="l">undocumented in Epic</span></div>
+      <div class="s"><span class="v hot">74</span><span class="l">caught only by the notes</span></div>
+    </div>
   </header>
 
   <div class="flow" role="tablist" aria-label="CKD solution steps">
     <button class="step" role="tab" data-step="1" aria-selected="false" aria-controls="p1">
       <div class="top"><span class="n">1</span><h3>Governed data</h3></div>
-      <p>Labs, meds, notes &amp; the Epic problem list, unified.</p>
+      <p>Labs, meds &amp; clinical notes, unified and governed.</p>
     </button>
     <div class="arrow" aria-hidden="true">→</div>
     <button class="step" role="tab" data-step="2" aria-selected="false" aria-controls="p2">
-      <div class="top"><span class="n">2</span><h3>Identify &amp; suggest</h3></div>
-      <p>KDIGO from labs + an ML model + AI on the notes.</p>
+      <div class="top"><span class="n">2</span><h3>AI reads notes + fuses with labs</h3></div>
+      <p>The notes reveal CKD the labs alone miss.</p>
     </button>
     <div class="arrow" aria-hidden="true">→</div>
     <button class="step" role="tab" data-step="3" aria-selected="false" aria-controls="p3">
-      <div class="top"><span class="n">3</span><h3>Clinician worklist</h3></div>
-      <p>A ranked review list; the clinician decides.</p>
+      <div class="top"><span class="n">3</span><h3>Clinician worklist + note analyzer</h3></div>
+      <p>Review the patient; read what the AI read.</p>
     </button>
     <div class="arrow" aria-hidden="true">→</div>
     <button class="step" role="tab" data-step="4" aria-selected="false" aria-controls="p4">
@@ -155,11 +166,11 @@
   <div class="detail" data-active="1">
     <div class="panel" id="p1" role="tabpanel" data-p="1">
       <div>
-        <p class="lead">Unify the raw clinical signals — and govern every column.</p>
-        <p class="what">Everything downstream reads one governed source, so the app, dashboards, and Genie always agree.</p>
+        <p class="lead">Unify structured labs and unstructured notes — govern every column.</p>
+        <p class="what">Here the notes are a first-class input, as important as the labs — both land in one governed source the app, dashboards, and Genie all read.</p>
         <ul>
           <li>A <b>Lakeflow medallion pipeline</b> lands raw feeds in <b>bronze</b>, cleans and types them in <b>silver</b>, and rolls them up to a patient-level <b>gold</b> table.</li>
-          <li>Sources: outpatient <b>eGFR / creatinine / albuminuria</b>, medications, free-text clinical notes, and the Epic problem-list status.</li>
+          <li>Sources: outpatient <b>eGFR / creatinine / albuminuria</b>, medications, the Epic problem-list status, and — critically — the <b>free-text clinical notes</b>.</li>
           <li><b>Unity Catalog</b> governs it all — lineage, primary/foreign keys, column comments, and <b>ABAC masking</b> on PHI (MRN shows as <code>MRN-***-****</code>).</li>
         </ul>
       </div>
@@ -173,36 +184,37 @@
 
     <div class="panel" id="p2" role="tabpanel" data-p="2" hidden>
       <div>
-        <p class="lead">Stage every patient from their labs — and flag the gaps, with confidence.</p>
-        <p class="what">Rules do the identifying; the model and the notes add decision support, not a black-box diagnosis.</p>
+        <p class="lead">The AI reads the notes for hidden CKD — then fuses that with the labs.</p>
+        <p class="what">CKD at a normal eGFR needs a damage marker (proteinuria) that often lives <b>only in the notes</b>. This step is where those cases get caught.</p>
         <ul>
-          <li><b>KDIGO stage</b> is computed from each patient's mean outpatient eGFR (G1 ≥90 → G5 &lt;15), excluding inpatient labs.</li>
-          <li>That lab-derived stage is compared to what's <b>documented in Epic</b> → flags for <b>undocumented</b> and <b>possibly mis-staged</b> CKD.</li>
-          <li>An <b>MLflow model</b> suggests the stage + a <b>confidence score</b>; it's registered in Unity Catalog, served on <b>Model Serving</b>, and batch-scored into gold.</li>
-          <li><b>AI Functions</b> (<code>ai_query</code>) read the free-text notes to catch nephrology involvement the structured data misses.</li>
+          <li><b>KDIGO stage</b> from mean outpatient eGFR flags the clear cases — but at a normal eGFR (≥90) the labs can look completely fine.</li>
+          <li><b>AI Functions</b> (<code>ai_query</code>, Llama 3.3 70B) read every clinical note and infer a <b>CKD-risk level</b> (none → high) from indirect signs — foamy urine, edema, rising creatinine — even though the note <b>never says “CKD.”</b></li>
+          <li>A <b>fusion model</b> (MLflow, on Model Serving) takes the labs <b>and</b> that notes-risk signal → predicts CKD. Neither alone is enough; together they are.</li>
+          <li>The payoff: <b>74 patients with normal labs</b> were flagged <b>only because the AI read their notes</b> — a labs-only approach misses every one.</li>
         </ul>
       </div>
       <div class="uses">
         <div class="cap">Databricks in this step</div>
-        <span class="tag"><b>AI Functions</b> <span>— read clinical notes</span></span>
-        <span class="tag"><b>MLflow + Model Serving</b> <span>— CKD stage model</span></span>
+        <span class="tag"><b>AI Functions</b> <span>— infer CKD risk from notes</span></span>
+        <span class="tag"><b>MLflow + Model Serving</b> <span>— fusion model (labs + notes)</span></span>
         <span class="tag"><b>Metric Views</b> <span>— governed KPI rollups</span></span>
       </div>
     </div>
 
     <div class="panel" id="p3" role="tabpanel" data-p="3" hidden>
       <div>
-        <p class="lead">Put the right patients in front of a clinician, with the evidence to decide.</p>
-        <p class="what">This is what replaces manual chart review — the model did the first pass; the clinician makes the call.</p>
+        <p class="lead">Put the right patients in front of a clinician — with the note as the evidence.</p>
+        <p class="what">Replaces manual chart review. For a caught-by-notes patient the note <b>is</b> the evidence, so the clinician reads exactly what the AI read before confirming.</p>
         <ul>
-          <li>A <b>Databricks App</b> reads the governed gold table through a <b>SQL warehouse</b> (the app's service principal — no data leaves governance).</li>
-          <li>Pick a cohort — undocumented, high-risk without nephrology, rapid eGFR decline — and open a patient to see the <b>eGFR trend, lab-derived stage, model suggestion + confidence, meds, and nephrology status</b>.</li>
-          <li>An embedded <b>Genie agent</b> answers plain-English follow-ups on the <b>same governed data</b>, so its numbers match the worklist.</li>
+          <li>A <b>Databricks App</b> opens on the <b>“Caught by notes” cohort</b> — patients with normal labs the AI surfaced. Each row shows the <b>AI notes-risk</b> and the <b>fusion CKD-risk score</b>.</li>
+          <li>Open a patient: the <b>physician note is right there to read</b>, with the indicators the AI flagged, next to the eGFR trend and the lab-vs-documented gap.</li>
+          <li>A <b>Notes → CKD analyzer</b> lets a clinician drop in any note (or PDF), get a <b>live AI read + fused prediction</b>, and even tune the definition the AI uses.</li>
+          <li>An embedded <b>Genie</b> answers plain-English questions on the same governed data, so its numbers match the worklist.</li>
         </ul>
       </div>
       <div class="uses">
         <div class="cap">Databricks in this step</div>
-        <span class="tag"><b>Databricks Apps</b> <span>— the clinician worklist</span></span>
+        <span class="tag"><b>Databricks Apps</b> <span>— worklist + note analyzer</span></span>
         <span class="tag"><b>Genie</b> <span>— plain-English Q&amp;A</span></span>
         <span class="tag"><b>AI/BI Dashboards</b> <span>— population view</span></span>
       </div>
