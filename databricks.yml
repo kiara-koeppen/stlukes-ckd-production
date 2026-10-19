@@ -1,7 +1,7 @@
 # St. Luke's CKD Production Solution - Databricks Asset Bundle
-# Deploy (reference/FEVM):        databricks bundle deploy -t dev
-# Deploy (your own workspace):    fill in the `prod` target below, then  databricks bundle deploy -t prod
-# See README.md → "Deploy in your own workspace" for the full step-by-step.
+# Deploy + build everything:  databricks bundle deploy -t febar && databricks bundle run ckd_end_to_end -t febar
+# Your own workspace:          fill in the `prod` target below, then the same two commands with -t prod
+# See README.md for the full step-by-step.
 bundle:
   name: stlukes-ckd-production
 
@@ -10,7 +10,7 @@ include:
 
 variables:
   catalog:
-    description: Target Unity Catalog. NOTE - the pipeline/*.sql files currently hardcode slhs_test1.ckd_prod; this var is consumed by the train-model job. See README for retargeting the SQL.
+    description: Target Unity Catalog for every table, view, model, and volume.
     default: slhs_test1
   schema:
     description: Target schema.
@@ -18,23 +18,42 @@ variables:
   warehouse_id:
     description: A serverless / Pro SQL warehouse for SQL steps, the dashboard, and the app.
     default: 9946580e2a7f4dd1
+  source_registry:
+    description: Synthetic CKD registry the raw-extract generator reads (no PHI).
+    default: slhs_test1.clinical.ckd_patient_registry
+  lakebase_project:
+    description: Lakebase Autoscaling project id (operational Postgres for the app).
+    default: ckd-febar
+  app_name:
+    description: Databricks App name for the clinician worklist.
+    default: ckd-risk-worklist-febar
+  stage_endpoint:
+    description: Model Serving endpoint for the CKD stage-suggestion model.
+    default: ckd-stage-model-febar
+  risk_endpoint:
+    description: Model Serving endpoint for the fusion (labs + notes) CKD-risk model.
+    default: ckd-risk-model-febar
+  genie_title:
+    description: Title of the Genie Agent the job creates and the app embeds.
+    default: CKD Identification & Risk Flagging (FE Bar)
 
 targets:
-  # ---- Reference build in the FEVM demo workspace ----
-  dev:
+  # ---- FE Bar end-to-end build: everything in its own schema, built by one job ----
+  #   databricks bundle deploy -t febar && databricks bundle run ckd_end_to_end -t febar
+  febar:
     default: true
-    mode: development
     workspace:
       host: https://adb-447340683886633.13.azuredatabricks.net
       profile: stlukes-workshop
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/febar
     variables:
       catalog: slhs_test1
-      schema: ckd_prod
+      schema: ckd_febar
       warehouse_id: 9946580e2a7f4dd1
 
   # ---- Template for deploying in YOUR OWN workspace (e.g. St. Luke's) ----
   # Fill in the four placeholders below, then: databricks bundle deploy -t prod
-  # (You also retarget pipeline/*.sql + app/app.yaml — see README "Deploy in your own workspace".)
+  # Also set source_registry if your synthetic registry lives elsewhere.
   prod:
     mode: production
     workspace:

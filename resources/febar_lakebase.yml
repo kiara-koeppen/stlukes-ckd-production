@@ -1,0 +1,8 @@
+# Lakebase Autoscaling project: operational Postgres for the App (synced worklist + write-back queue).
+# Created by `bundle deploy`; the synced table is created by job task 05 once its source table exists.
+resources:
+  postgres_projects:
+    ckd_lakebase:
+      project_id: ${var.lakebase_project}
+      display_name: "CKD risk worklist - operational store (${bundle.target})"
+      pg_version: 17

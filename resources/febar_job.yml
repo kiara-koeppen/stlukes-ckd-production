@@ -1,0 +1,71 @@
+# One job builds the whole solution end to end, in dependency order. Run with:
+#   databricks bundle run ckd_end_to_end -t febar
+resources:
+  jobs:
+    ckd_end_to_end:
+      name: "[${bundle.target}] CKD end-to-end: Lakeflow -> AI -> ML -> semantic -> Genie -> Lakebase -> validate"
+      max_concurrent_runs: 1
+      parameters:
+        - name: catalog
+          default: ${var.catalog}
+        - name: schema
+          default: ${var.schema}
+      tasks:
+        - task_key: generate_raw_extract
+          notebook_task:
+            notebook_path: ../setup/01_generate_raw_extract.py
+            base_parameters:
+              source_registry: ${var.source_registry}
+
+        - task_key: lakeflow_pipeline
+          depends_on: [{task_key: generate_raw_extract}]
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.ckd_lakeflow.id}
+            full_refresh: true
+
+        - task_key: note_ai
+          depends_on: [{task_key: lakeflow_pipeline}]
+          notebook_task:
+            notebook_path: ../jobs/02_note_ai.py
+
+        - task_key: train_and_serve_models
+          depends_on: [{task_key: note_ai}]
+          notebook_task:
+            notebook_path: ../ml/train_ckd_stage_model.py
+            base_parameters:
+              stage_endpoint: ${var.stage_endpoint}
+              risk_endpoint: ${var.risk_endpoint}
+
+        - task_key: semantic_layer
+          depends_on: [{task_key: train_and_serve_models}]
+          notebook_task:
+            notebook_path: ../jobs/04_semantic_layer.py
+
+        - task_key: genie_agent
+          depends_on: [{task_key: semantic_layer}]
+          notebook_task:
+            notebook_path: ../jobs/06_genie_space.py
+            base_parameters:
+              warehouse_id: ${var.warehouse_id}
+              genie_title: ${var.genie_title}
+
+        - task_key: lakebase_and_grants
+          depends_on: [{task_key: genie_agent}]
+          notebook_task:
+            notebook_path: ../jobs/05_lakebase_and_grants.py
+            base_parameters:
+              lakebase_project: ${var.lakebase_project}
+              app_name: ${resources.apps.ckd_worklist_febar.name}
+              stage_endpoint: ${var.stage_endpoint}
+              risk_endpoint: ${var.risk_endpoint}
+              genie_space_id: "{{tasks.genie_agent.values.genie_space_id}}"
+
+        - task_key: validate
+          depends_on: [{task_key: lakebase_and_grants}]
+          notebook_task:
+            notebook_path: ../jobs/99_validate.py
+            base_parameters:
+              lakebase_project: ${var.lakebase_project}
+              app_name: ${resources.apps.ckd_worklist_febar.name}
+              risk_endpoint: ${var.risk_endpoint}
+              genie_space_id: "{{tasks.genie_agent.values.genie_space_id}}"

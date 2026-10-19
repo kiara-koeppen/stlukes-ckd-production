@@ -4,28 +4,28 @@
       "name": "kpi",
       "displayName": "kpi",
       "queryLines": [
-        "SELECT sum(cast(caught_by_notes as int)) caught, sum(cast(undocumented_ckd as int)) undoc, sum(cast(notes_risk_flag as int)) notes_flagged, count(*) patients FROM slhs_test1.ckd_prod.patient_ckd_analytics"
+        "SELECT sum(cast(caught_by_notes as int)) caught, sum(cast(undocumented_ckd as int)) undoc, sum(cast(notes_risk_flag as int)) notes_flagged, count(*) patients FROM slhs_test1.ckd_febar.patient_ckd_analytics"
       ]
     },
     {
       "name": "by_risk",
       "displayName": "by_risk",
       "queryLines": [
-        "SELECT notes_ckd_risk, count(*) patients FROM slhs_test1.ckd_prod.patient_ckd_analytics GROUP BY notes_ckd_risk ORDER BY 2 DESC"
+        "SELECT notes_ckd_risk, count(*) patients FROM slhs_test1.ckd_febar.patient_ckd_analytics GROUP BY notes_ckd_risk ORDER BY 2 DESC"
       ]
     },
     {
       "name": "caught_by_stage",
       "displayName": "caught_by_stage",
       "queryLines": [
-        "SELECT lab_kdigo_stage, sum(cast(caught_by_notes as int)) caught_by_notes FROM slhs_test1.ckd_prod.patient_ckd_analytics GROUP BY lab_kdigo_stage ORDER BY lab_kdigo_stage"
+        "SELECT lab_kdigo_stage, sum(cast(caught_by_notes as int)) caught_by_notes FROM slhs_test1.ckd_febar.patient_ckd_analytics GROUP BY lab_kdigo_stage ORDER BY lab_kdigo_stage"
       ]
     },
     {
       "name": "caught_tbl",
       "displayName": "caught_tbl",
       "queryLines": [
-        "SELECT patient_id, lab_kdigo_stage, round(mean_egfr,0) egfr, notes_ckd_risk, ckd_risk_score FROM slhs_test1.ckd_prod.patient_ckd_analytics WHERE caught_by_notes ORDER BY ckd_risk_score DESC LIMIT 25"
+        "SELECT patient_id, lab_kdigo_stage, round(mean_egfr,0) egfr, notes_ckd_risk, ckd_risk_score FROM slhs_test1.ckd_febar.patient_ckd_analytics WHERE caught_by_notes ORDER BY ckd_risk_score DESC LIMIT 25"
       ]
     }
   ],

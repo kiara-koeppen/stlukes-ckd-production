@@ -1,0 +1,35 @@
+# Clinician worklist App. Lakebase `postgres` resource gives the App's service principal its own
+# Postgres role (CONNECT + CREATE) and injects PGHOST/PGDATABASE/PGUSER; the SQL warehouse backs the
+# analytical queries. Endpoint + Genie + UC grants are applied by job task 05 (they don't exist yet
+# on the very first deploy).
+resources:
+  apps:
+    ckd_worklist_febar:
+      name: ${var.app_name}
+      description: "CKD identification & risk flagging - clinician worklist (Lakebase) with Epic write-back queue"
+      source_code_path: ../app
+      config:
+        command: ["streamlit", "run", "app.py"]
+        env:
+          - name: CATALOG
+            value: ${var.catalog}
+          - name: SCHEMA
+            value: ${var.schema}
+          - name: DATABRICKS_WAREHOUSE_ID
+            value_from: sql-warehouse
+          - name: GENIE_SPACE_TITLE
+            value: ${var.genie_title}
+          - name: CKD_RISK_ENDPOINT
+            value: ${var.risk_endpoint}
+          - name: LAKEBASE_ENDPOINT
+            value: projects/${var.lakebase_project}/branches/production/endpoints/primary
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
+        - name: postgres
+          postgres:
+            branch: projects/${var.lakebase_project}/branches/production
+            database: projects/${var.lakebase_project}/branches/production/databases/databricks-postgres
+            permission: CAN_CONNECT_AND_CREATE

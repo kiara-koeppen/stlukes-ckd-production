@@ -7,23 +7,79 @@ Ask Genie) -> act (approve the confirmed stage -> Epic write-back queue, human-i
 The ML model suggests each patient's stage; the App is where a clinician reviews and acts; the
 embedded Genie agent answers ad-hoc questions on the SAME governed CKD data.
 
-Auth: uses the app's service principal via databricks-sdk (StatementExecution for SQL, Genie
-Conversation API for the Ask-Genie panel).
+Data paths:
+  * Lakebase Postgres (operational): the worklist + KPI tiles read the synced `patient_worklist_synced`
+    table, and clinician approvals are written to the app-owned OLTP table `app.epic_writeback_queue`.
+  * SQL warehouse (analytical): patient detail, notes, lab trends, live ai_query on a pasted note.
+  * Model Serving: the fusion (labs + notes) CKD-risk model. Genie Conversation API: Ask Genie.
+Auth: the app's service principal (databricks-sdk); Lakebase via an OAuth database credential.
 """
 import os, time, pandas as pd, streamlit as st
+import psycopg
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState
 
 CATALOG = os.getenv("CATALOG", "slhs_test1")
-SCHEMA = os.getenv("SCHEMA", "ckd_prod")
+SCHEMA = os.getenv("SCHEMA", "ckd_febar")
 WAREHOUSE_ID = os.getenv("DATABRICKS_WAREHOUSE_ID", "9946580e2a7f4dd1")
-GENIE_SPACE_ID = os.getenv("GENIE_SPACE_ID", "01f1b09e2ba113eda818aac6bf646a95")
+GENIE_TITLE = os.getenv("GENIE_SPACE_TITLE", "CKD Identification & Risk Flagging (FE Bar)")
+LAKEBASE_ENDPOINT = os.getenv("LAKEBASE_ENDPOINT", "projects/ckd-febar/branches/production/endpoints/primary")
 HOST = os.getenv("DATABRICKS_HOST", "https://adb-447340683886633.13.azuredatabricks.net")
 if not HOST.startswith("http"):                 # Apps runtime sets DATABRICKS_HOST without a scheme
     HOST = "https://" + HOST
-GENIE_URL = f"{HOST.rstrip('/')}/genie/rooms/{GENIE_SPACE_ID}"
+
 w = WorkspaceClient()
 st.set_page_config(page_title="CKD Risk Flagging", page_icon="🩺", layout="wide")
+
+@st.cache_resource
+def genie_space_id() -> str:
+    """The Genie agent is created by the bundle job (task 06); find it by title."""
+    spaces = w.api_client.do("GET", "/api/2.0/genie/spaces").get("spaces", [])
+    return next((s["space_id"] for s in spaces if s.get("title") == GENIE_TITLE), "")
+
+GENIE_SPACE_ID = genie_space_id()
+GENIE_URL = f"{HOST.rstrip('/')}/genie/rooms/{GENIE_SPACE_ID}"
+
+# --- Lakebase (Postgres) -------------------------------------------------------------------------
+# PGHOST / PGDATABASE / PGUSER / PGPORT / PGSSLMODE are injected by the app's `postgres` resource.
+# The password is a short-lived OAuth database credential, refreshed before it expires.
+@st.cache_resource
+def _pg_token_holder():
+    return {"token": None, "at": 0.0}
+
+def pg_connect():
+    h = _pg_token_holder()
+    if not h["token"] or time.time() - h["at"] > 40 * 60:
+        h["token"] = w.postgres.generate_database_credential(endpoint=LAKEBASE_ENDPOINT).token
+        h["at"] = time.time()
+    return psycopg.connect(host=os.environ["PGHOST"], dbname=os.environ.get("PGDATABASE", "databricks_postgres"),
+                           user=os.environ["PGUSER"], password=h["token"], port=os.environ.get("PGPORT", "5432"),
+                           sslmode=os.environ.get("PGSSLMODE", "require"))
+
+def pgq(sql: str, params=None) -> pd.DataFrame:
+    with pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        return pd.DataFrame(cur.fetchall(), columns=[c.name for c in cur.description])
+
+def pg_exec(sql: str, params=None):
+    with pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+
+@st.cache_resource
+def ensure_writeback_queue():
+    """The OLTP queue table is created by the bundle job (task 05); fail loudly if it is missing."""
+    pgq("SELECT 1 FROM app.epic_writeback_queue LIMIT 1")
+    return True
+
+def queue_for_epic(patient_id: str, stage: str, refer: bool, source: str):
+    ensure_writeback_queue()
+    reviewer = st.context.headers.get("X-Forwarded-Email") or st.context.headers.get("X-Forwarded-Preferred-Username") or "unknown"
+    pg_exec("""INSERT INTO app.epic_writeback_queue (patient_id, confirmed_stage, refer_nephrology, source, reviewed_by)
+               VALUES (%s, %s, %s, %s, %s)""", (patient_id, stage, bool(refer), source, reviewer))
+
+WL = f'"{SCHEMA}".patient_worklist_synced'   # Lakebase synced copy of the gold worklist
+WL_COLS = """patient_id, age, sex, lab_kdigo_stage, documented_ckd, notes_ckd_risk, ckd_risk_score,
+             suggested_stage, model_confidence, mean_egfr, sees_nephrology, key_meds, caught_by_notes"""
 
 def q(sql: str) -> pd.DataFrame:
     r = w.statement_execution.execute_statement(warehouse_id=WAREHOUSE_ID, statement=sql,
@@ -35,11 +91,8 @@ def q(sql: str) -> pd.DataFrame:
     data = r.result.data_array if r.result and r.result.data_array else []
     return pd.DataFrame(data, columns=cols)
 
-def exec_write(sql: str):
-    w.statement_execution.execute_statement(warehouse_id=WAREHOUSE_ID, statement=sql,
-                                            catalog=CATALOG, schema=SCHEMA, wait_timeout="50s")
 
-RISK_MODEL_ENDPOINT = os.getenv("CKD_RISK_ENDPOINT", "ckd-risk-model")
+RISK_MODEL_ENDPOINT = os.getenv("CKD_RISK_ENDPOINT", "ckd-risk-model-febar")
 RISK_ORD = {"none": 0, "low": 1, "moderate": 2, "high": 3}
 # The editable "CKD-from-notes definition" — the prompt the AI uses to judge a note. Reviewers can tune it.
 NOTE_RISK_PROMPT_DEFAULT = (
@@ -238,12 +291,12 @@ st.caption("St. Luke's Health System · labs, notes, and an ML model → a prior
            "with a governed path back to Epic. Ask questions in plain English, review the model's suggestions, act.")
 
 # --- Population: KPI tiles (Ask Genie lives in the floating corner bubble) ---
-k = q("""SELECT COUNT(DISTINCT patient_id) patients, SUM(CASE WHEN is_ckd THEN 1 ELSE 0 END) ckd,
+k = pgq(f"""SELECT COUNT(DISTINCT patient_id) patients, SUM(CASE WHEN is_ckd THEN 1 ELSE 0 END) ckd,
   SUM(CASE WHEN undocumented_ckd THEN 1 ELSE 0 END) undoc,
   SUM(CASE WHEN high_risk_no_nephrology THEN 1 ELSE 0 END) hirisk,
   SUM(CASE WHEN notes_risk_flag THEN 1 ELSE 0 END) notesrisk,
   SUM(CASE WHEN caught_by_notes THEN 1 ELSE 0 END) caught
-  FROM patient_ckd_analytics""")
+  FROM {WL}""")
 if not k.empty:
     c = st.columns(6)
     for col,label,key,helptext in zip(c,
@@ -269,9 +322,10 @@ with tab_work:
         st.info("**These patients have normal-looking kidney labs** (e.g. eGFR ≥90, no albuminuria on record) — a labs-only "
                 "approach misses them. The AI read their clinical notes, found indirect signs, and the model flagged them. "
                 "This is CKD **hidden in the notes**.")
-    wl = q(f"""SELECT patient_id, age, sex, lab_kdigo_stage, documented_ckd, notes_ckd_risk, ckd_risk_score,
-                 suggested_stage, model_confidence, mean_egfr, sees_nephrology, key_meds, caught_by_notes
-              FROM patient_ckd_analytics WHERE {where} ORDER BY ckd_risk_score DESC LIMIT 500""")
+    # `where` is one of the fixed boolean column names above (never user text)
+    t0 = time.time()
+    wl = pgq(f"SELECT {WL_COLS} FROM {WL} WHERE {where} ORDER BY ckd_risk_score DESC LIMIT 500")
+    st.caption(f"Served from Lakebase Postgres in {(time.time() - t0) * 1000:.0f} ms")
     st.write(f"**{len(wl)} patients** · {cohort} — each row shows the **AI notes-risk** and the **fusion CKD-risk score** (labs + notes).")
     st.dataframe(wl, use_container_width=True, hide_index=True)
 
@@ -284,10 +338,7 @@ with tab_work:
         pid = pasted or sel
         row = wl[wl["patient_id"] == pid]
         if row.empty and pasted:                           # pasted ID not in this cohort — look it up directly
-            safe = pasted.replace("'", "''")
-            row = q(f"""SELECT patient_id, age, sex, lab_kdigo_stage, documented_ckd, notes_ckd_risk, ckd_risk_score,
-                          suggested_stage, model_confidence, mean_egfr, sees_nephrology, key_meds, caught_by_notes
-                       FROM patient_ckd_analytics WHERE patient_id = '{safe}'""")
+            row = pgq(f"SELECT {WL_COLS} FROM {WL} WHERE patient_id = %s", (pasted,))
         if row.empty:
             st.warning(f"No patient found with ID '{pid}'. Check the ID, or pick one from the list.")
         else:
@@ -323,8 +374,7 @@ with tab_work:
                 confirmed = st.selectbox("Confirmed CKD stage", ["G1","G2","G3a","G3b","G4","G5",str(d["suggested_stage"])], index=6)
                 refer = st.checkbox("Also flag for nephrology referral", value=bool(d["lab_kdigo_stage"] in ("G4","G5")))
                 if st.button("✅ Approve & queue for Epic", type="primary"):
-                    exec_write(f"""INSERT INTO epic_writeback_queue (patient_id, confirmed_stage, refer_nephrology, reviewed_by, reviewed_at, status)
-                        VALUES ('{pid}', '{confirmed}', {str(bool(refer)).lower()}, current_user(), current_timestamp(), 'queued')""")
+                    queue_for_epic(pid, confirmed, refer, "worklist")
                     st.success(f"Queued stage {confirmed} for patient {pid} for Epic write-back.")
 
 with tab_analyzer:
@@ -386,14 +436,16 @@ with tab_analyzer:
                     if flagged:
                         refer2 = st.checkbox("Also flag for nephrology referral", key="an_refer")
                         if st.button("✅ Approve & queue this patient for Epic", key="an_approve"):
-                            exec_write(f"""INSERT INTO epic_writeback_queue (patient_id, confirmed_stage, refer_nephrology, reviewed_by, reviewed_at, status)
-                                VALUES ('{apid.replace("'","''")}', 'flagged-from-notes', {str(bool(refer2)).lower()}, current_user(), current_timestamp(), 'queued')""")
+                            queue_for_epic(apid, "flagged-from-notes", refer2, "notes-analyzer")
                             st.success(f"Queued {apid} for Epic write-back (flagged via notes + labs).")
             else:
                 st.info("Enter a patient ID above to also run the fusion model (labs + this note).")
 
 with tab_queue:
     st.subheader("Pending Epic write-backs")
-    st.caption("In production this queue is Lakebase (OLTP), drained by an Epic HL7/FHIR / app-orchard integration.")
-    st.dataframe(q("SELECT patient_id, confirmed_stage, refer_nephrology, reviewed_by, reviewed_at, status FROM epic_writeback_queue ORDER BY reviewed_at DESC LIMIT 200"),
+    st.caption("Stored in Lakebase Postgres (`app.epic_writeback_queue`). Next step in production: an Epic "
+               "HL7/FHIR integration drains queued rows and writes the confirmed stage back to the chart.")
+    ensure_writeback_queue()
+    st.dataframe(pgq("""SELECT id, patient_id, confirmed_stage, refer_nephrology, source, reviewed_by, reviewed_at, status
+                        FROM app.epic_writeback_queue ORDER BY reviewed_at DESC LIMIT 200"""),
                  use_container_width=True, hide_index=True)

@@ -1,6 +1,0 @@
-resources:
-  apps:
-    ckd_worklist:
-      name: ckd-risk-worklist
-      description: "CKD identification & risk-flagging - clinician worklist with Epic write-back queue"
-      source_code_path: ../app

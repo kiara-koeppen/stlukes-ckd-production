@@ -1,0 +1,294 @@
+{
+ "version": 2,
+ "config": {
+  "sample_questions": [
+   {
+    "id": "03e5088e0f5c10cdd24db4c527e1e09c",
+    "question": [
+     "How many CKD patients were caught only by the clinical notes?"
+    ]
+   },
+   {
+    "id": "6b2d5ed2fb5b48a706248c95f9d62ebc",
+    "question": [
+     "How many patients have undocumented CKD?"
+    ]
+   },
+   {
+    "id": "7276a9e2eef1a3243f2e3625f9ed7cef",
+    "question": [
+     "List patients with advanced CKD who are not seeing nephrology"
+    ]
+   },
+   {
+    "id": "74d817ec11c7a82fc8cdf7620f50121e",
+    "question": [
+     "Which providers have the most undocumented CKD patients?"
+    ]
+   },
+   {
+    "id": "a78805dde11510f435e96b197eb71d94",
+    "question": [
+     "Show undocumented CKD count by lab KDIGO stage"
+    ]
+   }
+  ]
+ },
+ "data_sources": {
+  "tables": [
+   {
+    "identifier": "{catalog}.{schema}.ckd_metrics"
+   },
+   {
+    "identifier": "{catalog}.{schema}.patient_ckd_analytics"
+   },
+   {
+    "identifier": "{catalog}.{schema}.patient_ckd_gold"
+   }
+  ]
+ },
+ "instructions": {
+  "text_instructions": [
+   {
+    "id": "00c0d3b85836ffe683bb932808681fb3",
+    "content": [
+     "This space answers questions about chronic kidney disease (CKD) identification for a primary-care population. ",
+     "For counts and KPIs, prefer the ckd_metrics metric view and wrap measures in MEASURE(). ",
+     "Undocumented CKD = the patient has CKD but no CKD stage is documented in the EHR. ",
+     "Possibly mis-staged = the documented stage differs from the lab-derived KDIGO stage (lab_kdigo_stage, from the mean of recent outpatient eGFRs). ",
+     "High risk = KDIGO G4 or G5 and not seeing nephrology. ",
+     "Caught by notes = the fusion model (labs + AI reading of the clinical notes) flags CKD risk while a labs-only model does not. ",
+     "Stages are KDIGO G1, G2, G3a, G3b, G4, G5."
+    ]
+   }
+  ]
+ },
+ "benchmarks": {
+  "questions": [
+   {
+    "id": "01f1b15b67d01a60bb58fef4c153c685",
+    "question": [
+     "How many patients have CKD?"
+    ],
+    "answer": [
+     {
+      "format": "SQL",
+      "content": [
+       "SELECT MEASURE(`CKD Patients`) FROM {catalog}.{schema}.ckd_metrics"
+      ]
+     }
+    ]
+   },
+   {
+    "id": "01f1b15b67fb1f4a9f0d2f1559d16abb",
+    "question": [
+     "How many patients have undocumented CKD?"
+    ],
+    "answer": [
+     {
+      "format": "SQL",
+      "content": [
+       "SELECT MEASURE(`Undocumented CKD`) FROM {catalog}.{schema}.ckd_metrics"
+      ]
+     }
+    ]
+   },
+   {
+    "id": "01f1b15b682717349cc3154475035e18",
+    "question": [
+     "How many patients are possibly mis-staged?"
+    ],
+    "answer": [
+     {
+      "format": "SQL",
+      "content": [
+       "SELECT MEASURE(`Possibly Mis-Staged`) FROM {catalog}.{schema}.ckd_metrics"
+      ]
+     }
+    ]
+   },
+   {
+    "id": "01f1b15b686711f790b06e072b724cb5",
+    "question": [
+     "How many high-risk patients have no nephrology referral?"
+    ],
+    "answer": [
+     {
+      "format": "SQL",
+      "content": [
+       "SELECT MEASURE(`High Risk No Nephrology`) FROM {catalog}.{schema}.ckd_metrics"
+      ]
+     }
+    ]
+   },
+   {
+    "id": "01f1b15b6891188ab8ac83c61c47bef1",
+    "question": [
+     "How many patients have rapid eGFR decline?"
+    ],
+    "answer": [
+     {
+      "format": "SQL",
+      "content": [
+       "SELECT MEASURE(`Rapid eGFR Decline`) FROM {catalog}.{schema}.ckd_metrics"
+      ]
+     }
+    ]
+   },
+   {
+    "id": "01f1b15b68b91b088d0ee02f247d7a74",
+    "question": [
+     "How many advanced-stage patients are not on kidney-protective medications?"
+    ],
+    "answer": [
+     {
+      "format": "SQL",
+      "content": [
+       "SELECT MEASURE(`Advanced Not On Protective Meds`) FROM {catalog}.{schema}.ckd_metrics"
+      ]
+     }
+    ]
+   },
+   {
+    "id": "01f1b15b68e41aeda795782e100ea9f1",
+    "question": [
+     "Show undocumented CKD count by lab KDIGO stage"
+    ],
+    "answer": [
+     {
+      "format": "SQL",
+      "content": [
+       "SELECT `Lab KDIGO Stage`, MEASURE(`Undocumented CKD`) FROM {catalog}.{schema}.ckd_metrics GROUP BY `Lab KDIGO Stage` ORDER BY `Lab KDIGO Stage`"
+      ]
+     }
+    ]
+   },
+   {
+    "id": "01f1b15b690d16c7989476948835a336",
+    "question": [
+     "Which providers have the most undocumented CKD patients?"
+    ],
+    "answer": [
+     {
+      "format": "SQL",
+      "content": [
+       "SELECT `Provider`, MEASURE(`Undocumented CKD`) AS undocumented_ckd FROM {catalog}.{schema}.ckd_metrics GROUP BY `Provider` ORDER BY undocumented_ckd DESC LIMIT 10"
+      ]
+     }
+    ]
+   },
+   {
+    "id": "01f1b15b693514a9a616c2e2664c3f3e",
+    "question": [
+     "Break down patient count by lab KDIGO stage and sex"
+    ],
+    "answer": [
+     {
+      "format": "SQL",
+      "content": [
+       "SELECT `Lab KDIGO Stage`, `Sex`, MEASURE(`Patient Count`) FROM {catalog}.{schema}.ckd_metrics GROUP BY `Lab KDIGO Stage`, `Sex` ORDER BY `Lab KDIGO Stage`, `Sex`"
+      ]
+     }
+    ]
+   },
+   {
+    "id": "01f1b15b696114bd8122b29a38ab2a69",
+    "question": [
+     "What is the average model confidence by suggested stage?"
+    ],
+    "answer": [
+     {
+      "format": "SQL",
+      "content": [
+       "SELECT `Suggested Stage`, MEASURE(`Avg Model Confidence`) FROM {catalog}.{schema}.ckd_metrics GROUP BY `Suggested Stage` ORDER BY `Suggested Stage`"
+      ]
+     }
+    ]
+   },
+   {
+    "id": "01f1b15b698d1388ac2802eb7874168d",
+    "question": [
+     "List patients with advanced CKD who are not seeing nephrology"
+    ],
+    "answer": [
+     {
+      "format": "SQL",
+      "content": [
+       "SELECT patient_id, patient_num, age, sex, actual_ckd_stage, lab_kdigo_stage, sees_nephrology, assigned_provider_name FROM {catalog}.{schema}.patient_ckd_analytics WHERE high_risk_no_nephrology = true"
+      ]
+     }
+    ]
+   },
+   {
+    "id": "01f1b15b69b61123b9d29f0784163e5f",
+    "question": [
+     "Show me patients over 75 with stage 4 or 5 CKD who are not on protective meds"
+    ],
+    "answer": [
+     {
+      "format": "SQL",
+      "content": [
+       "SELECT patient_id, patient_num, age, sex, actual_ckd_stage, lab_kdigo_stage, on_kidney_protective_meds, assigned_provider_name FROM {catalog}.{schema}.patient_ckd_analytics WHERE age > 75 AND lab_kdigo_stage IN ('G4', 'G5') AND on_kidney_protective_meds = false"
+      ]
+     }
+    ]
+   },
+   {
+    "id": "01f1b15b69db1dfc87014248b334147f",
+    "question": [
+     "List high-risk patients where the model confidence is below 0.7"
+    ],
+    "answer": [
+     {
+      "format": "SQL",
+      "content": [
+       "SELECT patient_id, patient_num, age, sex, actual_ckd_stage, suggested_stage, model_confidence, sees_nephrology, assigned_provider_name FROM {catalog}.{schema}.patient_ckd_analytics WHERE high_risk_no_nephrology = true AND model_confidence < 0.7"
+      ]
+     }
+    ]
+   },
+   {
+    "id": "01f1b15b6a2e13a9aa69a658a0f51cfb",
+    "question": [
+     "What percentage of CKD patients have undocumented CKD?"
+    ],
+    "answer": [
+     {
+      "format": "SQL",
+      "content": [
+       "SELECT ROUND(SUM(CASE WHEN undocumented_ckd THEN 1 ELSE 0 END) * 100.0 / SUM(CASE WHEN is_ckd THEN 1 ELSE 0 END), 1) AS pct_undocumented FROM {catalog}.{schema}.patient_ckd_analytics"
+      ]
+     }
+    ]
+   },
+   {
+    "id": "01f1b15b6a5b176fa1f0a073977d18f9",
+    "question": [
+     "How does the model suggested stage compare to the lab KDIGO stage?"
+    ],
+    "answer": [
+     {
+      "format": "SQL",
+      "content": [
+       "SELECT lab_kdigo_stage, suggested_stage, COUNT(*) AS patient_count FROM {catalog}.{schema}.patient_ckd_analytics GROUP BY lab_kdigo_stage, suggested_stage ORDER BY lab_kdigo_stage, suggested_stage"
+      ]
+     }
+    ]
+   },
+   {
+    "id": "af3c221a30dc2dd55c6eaa63a9866478",
+    "question": [
+     "How many CKD patients were caught only by the clinical notes?"
+    ],
+    "answer": [
+     {
+      "format": "SQL",
+      "content": [
+       "SELECT MEASURE(`Caught By Notes`) AS caught_by_notes FROM {catalog}.{schema}.ckd_metrics"
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

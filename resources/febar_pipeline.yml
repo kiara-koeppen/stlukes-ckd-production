@@ -1,0 +1,16 @@
+# Lakeflow Spark Declarative Pipeline: raw volume -> bronze -> silver -> gold (serverless).
+resources:
+  pipelines:
+    ckd_lakeflow:
+      name: "[${bundle.target}] CKD Lakeflow pipeline (bronze -> silver -> gold)"
+      catalog: ${var.catalog}
+      schema: ${var.schema}
+      serverless: true
+      channel: CURRENT
+      photon: true
+      configuration:
+        catalog: ${var.catalog}
+        schema: ${var.schema}
+      libraries:
+        - file:
+            path: ../pipeline/ckd_lakeflow_pipeline.sql

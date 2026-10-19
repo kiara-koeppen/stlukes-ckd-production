@@ -1,0 +1,128 @@
+[
+ {
+  "layer": "Lakeflow",
+  "check": "Bronze rows ingested by Auto Loader from the landing volume",
+  "result": "PASS",
+  "detail": "bronze_patient=2000, bronze_lab_events=12200, bronze_clinical_notes=2000"
+ },
+ {
+  "layer": "Lakeflow",
+  "check": "KDIGO outpatient-only rule enforced in silver (expectation drops inpatient labs)",
+  "result": "PASS",
+  "detail": "inpatient in bronze=200, inpatient in silver=0, silver_lab_events=12000"
+ },
+ {
+  "layer": "Lakeflow",
+  "check": "Silver + gold one row per patient",
+  "result": "PASS",
+  "detail": "silver_patient_labs=2000, patient_ckd_gold=2000"
+ },
+ {
+  "layer": "Lakeflow",
+  "check": "Pipeline event log records expectation metrics (latest update)",
+  "result": "PASS",
+  "detail": "[{\"expectation\": \"has_note_text\", \"dataset\": \"slhs_test1.ckd_febar.bronze_clinical_notes\", \"passed\": 2000, \"failed\": 0}, {\"expectation\": \"has_patient\", \"dataset\": \"slhs_test1.ckd_febar.bronze_lab_events\", \"passed\": 12200, \"failed\": 0}, {\"expectation\": \"known_analyte\", \"dataset\": \"slhs_test1.ckd_febar.bronze_lab_events\", \"passed\": 12200, \"failed\": 0}, {\"expectation\": \"valid_age\", \"dataset\": \"slhs_test1.ckd_febar.bronze_patient\", \"passed\": 2000, \"failed\": 0}, {\"expectation\": \"valid_sex\", \"dataset\": \"slhs_test1.ckd_febar.bronze_patient\", \"passed\": 2000, \"failed\": 0}, {\"expectation\": \"has_lab_stage\", \"dataset\": \"slhs_test1.ckd_febar.patient_ckd_gold\", \"passed\": 2000, \"failed\": 0}, {\"expectation\": \"outpatient_only\", \"dataset\": \"slhs_test1.ckd_febar.silver_lab_events\", \"passed\": 12000, \"failed\": 200}, {\"expectation\": \"plausible_value\", \"dataset\": \"slhs_test1.ckd_febar.silver_lab_events\", \"passed\": 12200, \"failed\": 0}]"
+ },
+ {
+  "layer": "Unity Catalog",
+  "check": "Primary/foreign keys declared on pipeline tables",
+  "result": "PASS",
+  "detail": "bronze_patient:PRIMARY KEY, patient_ckd_gold:FOREIGN KEY, patient_ckd_gold:PRIMARY KEY, patient_worklist:PRIMARY KEY"
+ },
+ {
+  "layer": "Unity Catalog",
+  "check": "PHI column mask on MRN (reader not in ckd_phi_readers sees masked value)",
+  "result": "PASS",
+  "detail": "gold.mrn=MRN-***-****, bronze.mrn=MRN-***-****, reader_in_phi_group=False"
+ },
+ {
+  "layer": "Unity Catalog",
+  "check": "Gold columns documented with comments",
+  "result": "PASS",
+  "detail": "28/28 columns commented"
+ },
+ {
+  "layer": "Gen AI",
+  "check": "ai_query read every note and returned structured CKD risk",
+  "result": "PASS",
+  "detail": "notes=2000, unparsed=0, moderate/high risk=1104"
+ },
+ {
+  "layer": "Gen AI",
+  "check": "Example AI read on an occult-CKD patient (normal labs, caught by notes)",
+  "result": "PASS",
+  "detail": "risk=moderate, indicators=['foamy urine', 'periorbital edema', 'rising creatinine']"
+ },
+ {
+  "layer": "ML",
+  "check": "Stage-suggestion model batch scores",
+  "result": "PASS",
+  "detail": "scored=2000, agree with clinician stage=1967, mean confidence=0.923"
+ },
+ {
+  "layer": "ML",
+  "check": "Fusion (labs + notes) model catches CKD the labs-only model misses",
+  "result": "PASS",
+  "detail": "scored=2000, flagged CKD risk=1615, caught_by_notes (labs-only missed)=74"
+ },
+ {
+  "layer": "ML",
+  "check": "ckd_stage_model registered in Unity Catalog with MLflow metrics",
+  "result": "PASS",
+  "detail": "slhs_test1.ckd_febar.ckd_stage_model v2, metrics={'accuracy': 0.917, 'macro_f1': 0.821}"
+ },
+ {
+  "layer": "ML",
+  "check": "ckd_risk_model registered in Unity Catalog with MLflow metrics",
+  "result": "PASS",
+  "detail": "slhs_test1.ckd_febar.ckd_risk_model v2, metrics={'baseline_acc': 0.942, 'baseline_auc': 0.962, 'baseline_borderline_auc': 0.784, 'baseline_borderline_recall': 0.62, 'baseline_f1': 0.963, 'fusion_acc': 0.99, 'fusion_auc': 0.996, 'fusion_borderline_auc': 0.974, 'fusion_borderline_recall': 0.958, 'fusion_f1': 0.994}"
+ },
+ {
+  "layer": "ML",
+  "check": "Real-time Model Serving endpoint returns a prediction",
+  "result": "PASS",
+  "detail": "endpoint=ckd-risk-model-febar, input={\"age\": 61.0, \"mean_egfr\": 115.7, \"latest_egfr\": 116.0, \"prior_egfr\": 116.0, \"egfr_trend_recent_minus_prior\": 0.0, \"mean_creatinine\": 0.96, \"notes_ckd_risk_ord\": 2}, response=[1]"
+ },
+ {
+  "layer": "Semantic layer",
+  "check": "Metric View KPIs (MEASURE query)",
+  "result": "PASS",
+  "detail": "patients=2000, ckd=1627, undocumented=621, possibly_mis_staged=527, high_risk_no_nephrology=238, caught_by_notes=74"
+ },
+ {
+  "layer": "Genie Agent",
+  "check": "Live Genie answer matches the governed Metric View",
+  "result": "PASS",
+  "detail": "question='How many patients have undocumented CKD?', genie_result=[['621']], metric_view=621, sql='SELECT MEASURE(`Undocumented CKD`) AS `undocumented_ckd_patients`\\nFROM `slhs_test1`.`ckd_febar`.`ckd_metrics`\\nGROUP BY ALL'"
+ },
+ {
+  "layer": "Lakebase",
+  "check": "Synced table serves the gold worklist in Postgres (matches Delta)",
+  "result": "PASS",
+  "detail": "state=SYNCED_TABLE_ONLINE_NO_PENDING_UPDATE, postgres rows=2000, undocumented=621, last_sync=None"
+ },
+ {
+  "layer": "Lakebase",
+  "check": "Low-latency point reads",
+  "result": "PASS",
+  "detail": "50 primary-key lookups: p50=2.4 ms, p95=4.7 ms"
+ },
+ {
+  "layer": "Lakebase",
+  "check": "OLTP write-back queue round-trip (insert -> read -> delete)",
+  "result": "PASS",
+  "detail": "inserted id=1, read back=('ACO-009EM0Q3X3K', 'G3a', True, 'validation')"
+ },
+ {
+  "layer": "App",
+  "check": "App running with Lakebase + SQL warehouse resources",
+  "result": "PASS",
+  "detail": "app=ckd-risk-worklist-febar, url=https://ckd-risk-worklist-febar-447340683886633.13.azure.databricksapps.com, compute=ACTIVE, deployment=SUCCEEDED, resources=['postgres', 'sql_warehouse']"
+ },
+ {
+  "layer": "App",
+  "check": "App service principal has least-privilege UC access (no admin)",
+  "result": "PASS",
+  "detail": "sp=fcf71a9e-349e-446f-a2b5-38db70313676, schema grants=['EXECUTE', 'SELECT', 'USE SCHEMA', 'EXECUTE', 'READ VOLUME', 'SELECT', 'USE SCHEMA']"
+ }
+]
