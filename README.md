@@ -1,112 +1,140 @@
-# St. Luke's — CKD Identification & Risk Flagging (Production Solution)
+# St. Luke's: CKD Identification & Risk Flagging (end-to-end Databricks build)
 
-A production‑grade, end‑to‑end reference solution for the St. Luke's Health System CKD use case.
-Where the workshop shows the "art of the possible," this shows **what an actual build looks like** on
-Databricks — medallion pipeline, deterministic KDIGO staging, an ML stage‑suggestion model, clinical
-note AI, a governed semantic layer, conversational + BI access, and a clinician App with a
-human‑in‑the‑loop path to write results back to Epic.
+**Customer:** St. Luke's Health System (Boise, ID). **Who it serves:** clinical leadership (executive
+sponsor: care-gap closure, outcomes, and safe Epic write-back) and the primary-care + nephrology
+care teams (domain owners: a prioritized, explainable worklist). **Data:** 100% synthetic,
+deterministic, no PHI.
 
-## The problem (from St. Luke's project request)
+## The business problem
+
 > CKD stages are often missing or incorrectly documented in Epic. Physicians must manually review
-> large patient populations, which is time‑consuming and risks delayed intervention.
+> large patient populations, which is time-consuming and risks delayed intervention.
 
-The solution must: (1) identify patients with CKD and unclear/missing staging, (2) **suggest the
-likely CKD stage from labs and trends over time**, (3) flag high‑risk patients for clinician review,
-(4) reduce manual chart‑review burden. Leadership's key concern: **writing results back to Epic**
-smoothly and with a human in the loop.
+St. Luke's asked for a solution that (1) finds patients with CKD and missing or unclear staging,
+(2) suggests the likely stage from labs and their trend, (3) flags high-risk patients for clinician
+review, and (4) cuts chart-review burden. Leadership's key concern: **writing results back to Epic**
+safely, with a clinician in the loop.
 
-## Architecture (end to end)
+**What the build finds in the 2,000-patient synthetic panel** (from `evidence/VALIDATION_RESULTS.md`):
+
+| KPI | Patients | Why it matters |
+|---|---|---|
+| Have CKD (clinician-ascertained) | 1,627 | The population to manage |
+| **Undocumented CKD** | **621** | CKD by labs/notes but no stage in the chart: the care gap |
+| Possibly mis-staged | 527 | Documented stage disagrees with the KDIGO lab stage |
+| High risk, not seeing nephrology | 238 | G4/G5 with no nephrology relationship |
+| **Caught only by the notes** | **74** | Normal-looking labs; the AI's reading of the notes is what surfaced CKD |
+
+## Architecture: one connected journey
+
 ```
-Epic feeds (labs, notes, meds, problem list)
-   │  Lakeflow Connect (prod)  /  synthetic seed (this build)
-   ▼
-BRONZE  raw lab events, notes, meds            ─┐
-   ▼                                            │ Lakeflow Declarative Pipeline (SDP)
-SILVER  outpatient-only labs, 3-mo eGFR means   │  bronze → silver → gold, medallion
-   ▼                                            │
-GOLD    patient features + KDIGO lab stage +   ─┘
-        risk / care-gap flags  (patient_ckd_gold)
-   ├─▶ AI Functions: ai_query/ai_extract on notes → nephrology & CKD mentions
-   ├─▶ ML (MLflow): CKD-stage suggestion model → UC Model Registry → Model Serving → batch + realtime scores
-   ├─▶ Metric View: governed KPIs (CKD, undocumented, mis-staged, high-risk)
-   ├─▶ Genie Agent + AI/BI Dashboard: clinician self-service + population view
-   └─▶ Databricks App: clinician worklist (lab trend, suggested vs documented stage, confidence)
-              └─▶ human-in-the-loop review → write-back queue (Lakebase) = Epic integration point
-Cross-cutting: Unity Catalog governance (PK/FK, comments, ABAC PHI masking), Unity AI Gateway,
-MLflow evaluation, Lakehouse Monitoring, Lakeflow Jobs orchestration, packaged as a DAB.
+ Synthetic Epic-shaped extract (patients, lab events, notes)       [setup/01_generate_raw_extract.py]
+        │  CSV files in a Unity Catalog volume (in prod: Lakeflow Connect off Clarity / HL7-FHIR feeds)
+        ▼
+ ┌─ LAKEFLOW (Spark Declarative Pipeline, serverless) ─────────────  [pipeline/ckd_lakeflow_pipeline.sql]
+ │  bronze_*  Auto Loader streaming tables, typed on read, expectations (valid age/sex, known analyte)
+ │  silver    outpatient_only expectation drops inpatient eGFRs (KDIGO rule) → per-patient lab summary
+ │  gold      patient_ckd_gold: KDIGO stage, documented-vs-lab, undocumented / mis-staged / high-risk flags
+ └─ UNITY CATALOG: comments on every column, PK/FK, MRN column mask, lineage, grants
+        │
+        ├─▶ GEN AI   ai_query reads every note for indirect CKD signs → patient_note_signals   [jobs/02]
+        ├─▶ ML       MLflow: stage-suggestion model + fusion (labs + notes) risk model,
+        │            registered in UC, served on Model Serving, batch-scored                    [ml/]
+        ├─▶ SEMANTIC patient_ckd_analytics + Metric View ckd_metrics (one KPI definition)      [jobs/04]
+        ├─▶ GENIE    Genie Agent on the Metric View with instructions + 16 benchmarks          [genie/, jobs/06]
+        └─▶ LAKEBASE synced table patient_worklist_synced (Postgres) for fast app reads,
+                     + native OLTP table app.epic_writeback_queue                             [jobs/05]
+                          │
+                          ▼
+ DATABRICKS APP  ckd-risk-worklist-febar (Streamlit)                                            [app/]
+   KPI tiles + cohort worklist (from Lakebase) → patient review (note, eGFR trend, model stage)
+   → clinician approves stage → row in Lakebase write-back queue (the Epic integration point)
+   + embedded Ask Genie, + notes analyzer (live ai_query + real-time model endpoint)
 ```
 
-## KDIGO staging (validated)
-Lab‑derived stage from the mean of the 3 most‑recent **outpatient** eGFRs (inpatient labs excluded):
-G1 ≥90 · G2 60‑89 · G3a 45‑59 · G3b 30‑44 · G4 15‑29 · G5 <15 (eGFR ≥60 needs albuminuria to be CKD).
-This reproduces the clinician‑ascertained "actual stage" closely on the sample data, and the
-documented‑vs‑lab comparison is what surfaces missing/mis‑staged patients.
+Every layer reads the same governed data in `slhs_test1.ckd_febar`; nothing is mocked. The
+validation task traces the same numbers through every layer (e.g. undocumented CKD = 621 in the
+Metric View, in Genie's live answer, and in Lakebase).
+
+## Execution evidence
+
+`evidence/VALIDATION_RESULTS.md` is written by the last job task against the live assets and records
+actual outputs: **21/21 checks passed**, including Lakeflow expectation metrics from the pipeline
+event log, the MRN mask in effect, MLflow metrics, a live serving-endpoint response, Genie's answer
+and generated SQL, Lakebase row counts and point-read latency (p95 ~5 ms), an OLTP write round-trip,
+and the app's resources and grants. `evidence/validation_results.json` has the same as JSON.
+
+## Prerequisites
+
+* A recent Databricks CLI with Lakebase Autoscaling bundle support (built and tested with v1.19.0), authenticated to the workspace (`databricks auth login`)
+* Unity Catalog workspace with serverless compute, a serverless/Pro SQL warehouse, Lakebase
+  Autoscaling, Databricks Apps, Model Serving, Genie, and Foundation Model APIs
+  (`databricks-meta-llama-3-3-70b-instruct`)
+* The synthetic registry table `clinical.ckd_patient_registry` (generator and loader live in the
+  companion `stlukes-workshop-data` repo), or point `source_registry` at your copy
+* Permission to create schemas/volumes in the target catalog, Lakebase projects, serving endpoints, and apps
+
+## Deploy and run
+
+```bash
+# 1. Deploy all resources (Lakebase project, pipeline, job, app, dashboard)
+databricks bundle deploy -t febar
+
+# 2. Build everything end to end, in dependency order, ending with validation
+databricks bundle run ckd_end_to_end -t febar
+
+# 3. Deploy the app source and start it
+databricks bundle run ckd_worklist_febar -t febar
+```
+
+The job's tasks: `generate_raw_extract` → `lakeflow_pipeline` (full refresh) → `note_ai` →
+`train_and_serve_models` → `semantic_layer` → `genie_agent` → `lakebase_and_grants` → `validate`.
+Re-running is idempotent (endpoints update, Genie updates by title, the synced table re-syncs).
+
+> If `bundle deploy` fails with "openpgp: key expired", point the CLI at a local Terraform:
+> `export DATABRICKS_TF_EXEC_PATH=$(which terraform) DATABRICKS_TF_VERSION=<your version>`.
+
+**Another workspace:** fill in the `prod` target in `databricks.yml` (host, profile, catalog,
+warehouse) and run the same commands with `-t prod`.
+
+## Configuration (bundle variables)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `catalog` / `schema` | `slhs_test1` / `ckd_febar` | Where every table, view, volume, function, and model lands |
+| `warehouse_id` | `9946580e2a7f4dd1` | SQL warehouse for Genie, the app, and the dashboard |
+| `source_registry` | `slhs_test1.clinical.ckd_patient_registry` | Synthetic registry the generator reads |
+| `lakebase_project` | `ckd-febar` | Lakebase Autoscaling project (branch `production`, db `databricks_postgres`) |
+| `app_name` | `ckd-risk-worklist-febar` | Databricks App name |
+| `stage_endpoint` / `risk_endpoint` | `ckd-stage-model-febar` / `ckd-risk-model-febar` | Model Serving endpoints |
+| `genie_title` | `CKD Identification & Risk Flagging (FE Bar)` | Genie Agent title (the app finds it by title) |
+
+App environment (set by the bundle): `CATALOG`, `SCHEMA`, `DATABRICKS_WAREHOUSE_ID` (from the
+warehouse resource), `GENIE_SPACE_TITLE`, `CKD_RISK_ENDPOINT`, `LAKEBASE_ENDPOINT`; `PGHOST`,
+`PGDATABASE`, `PGUSER`, `PGPORT`, `PGSSLMODE` come from the app's Lakebase `postgres` resource.
 
 ## Repo structure
-- `pipeline/` — medallion + KDIGO staging (SDP SQL; `03_gold_ckd.sql` is the gold layer)
-- `ai_functions/` — `ai_query`/`ai_extract` note extraction
-- `ml/` — MLflow training + evaluation of the CKD‑stage suggestion model
-- `app/` — Databricks App (clinician worklist + Epic write‑back queue)
-- `resources/` — DAB resource defs (pipeline, jobs, model, app)
-- `setup/` — bootstrap (schema + synthetic seed)
 
-## Data & scope notes
-- Built on **synthetic** CKD data (no PHI). The real de‑identified sample is not committed.
-- "Write back to Epic" is implemented as a governed **approval queue / integration point** (there is
-  no Epic in this environment) — the pattern leadership needs to see, ready to wire to Epic's
-  HL7/FHIR or app‑orchard APIs.
-- Target: `slhs_test1` catalog, `ckd_prod` schema. The DAB `catalog`/`schema` vars drive the train-model
-  job; the `pipeline/*.sql` still hardcode the catalog/schema (see "Deploy in your own workspace").
+| Path | What it is |
+|---|---|
+| `databricks.yml` | Bundle: variables and targets (`febar` default, `prod` template) |
+| `resources/` | Bundle resources: Lakebase project, Lakeflow pipeline, end-to-end job, app, dashboard |
+| `setup/01_generate_raw_extract.py` | Builds the synthetic raw extract into the landing volume; creates the MRN mask function |
+| `pipeline/ckd_lakeflow_pipeline.sql` | Lakeflow pipeline: bronze/silver/gold with expectations, keys, mask, comments |
+| `jobs/02_note_ai.py` | `ai_query` note reading → per-note and per-patient CKD-risk signals |
+| `ml/train_ckd_stage_model.py` | MLflow training, UC registration, batch scoring, Model Serving deployment |
+| `jobs/04_semantic_layer.py` | Analytics view, Metric View, Lakebase-ready worklist table |
+| `jobs/06_genie_space.py` + `genie/space_template.json` | Genie Agent definition (instructions, sample questions, benchmarks) |
+| `jobs/05_lakebase_and_grants.py` | Synced table, Postgres write-back queue, app service-principal grants |
+| `jobs/99_validate.py` | End-to-end checks; writes `evidence/` |
+| `app/` | Streamlit clinician worklist app |
+| `dashboard/` | AI/BI dashboard (labs + notes fusion view) |
+| `docs/` | Leadership slide, interactive walkthrough, synthetic clinical-reference PDFs |
+| `BUILD.md` | How it was built: AI-assisted workflow and key decisions |
 
-## Deploy in your own workspace
-This repo is a **reference build** wired to a Databricks demo workspace (catalog `slhs_test1`) on
-**synthetic** data. Standing it up elsewhere (e.g., a St. Luke's workspace) is a guided setup, not a
-one-command deploy — here's the honest sequence.
+## Path to production
 
-**Prerequisites:** Databricks CLI ≥ 0.239, Unity Catalog, a **serverless / Pro SQL warehouse**, and
-permissions to create schemas, jobs, models, and apps. For `ai_forecast` and doc-Q&A, enable the
-**Predictive AI Functions** and **Genie-on-Volumes** previews (Settings → Previews).
-
-1. **Auth to your workspace** — `databricks auth login --host https://<your-host>` and note the profile name.
-2. **Point the bundle at your workspace** — edit the `prod` target in `databricks.yml`: set `host`,
-   `profile`, `catalog`, `schema`, `warehouse_id` (the four `REPLACE-…` placeholders).
-3. **Seed + build the tables** ⚠️ *the one manual step*. `pipeline/*.sql` currently **hardcodes**
-   `slhs_test1.ckd_prod` and reads its synthetic source from `slhs_test1.clinical.ckd_patient_registry`.
-   To run elsewhere you must: (a) load an equivalent patient registry into your catalog (the synthetic
-   generator lives in the `stlukes-workshop-data` repo), and (b) find-and-replace `slhs_test1.ckd_prod`
-   → `<your_catalog>.<your_schema>` (and the `slhs_test1.clinical.ckd_patient_registry` source) across
-   `pipeline/*.sql` + `ai_functions/*.sql`, then run them **in order** (01→06) in the SQL editor.
-   *(Ask for the fully-parameterized version if you'd rather not hand-edit — see "Not yet automated".)*
-4. **Deploy the bundle** — `databricks bundle deploy -t prod` (creates the train-model job + the app).
-5. **Train + serve the model** — `databricks bundle run ckd_train_model -t prod` (registers the model in
-   UC and, per the notebook, sets up serving + batch scores).
-6. **Create your Genie space** on your gold tables (`patient_ckd_analytics`, `ckd_metrics`), grab its
-   space ID, and set it — plus `CATALOG` / `SCHEMA` / `DATABRICKS_WAREHOUSE_ID` — in **`app/app.yaml`**;
-   then `databricks bundle run ckd_worklist -t prod` to (re)deploy the app.
-7. **(Optional)** attach the `clinical_guidelines` volume to your Genie space for doc Q&A.
-
-**Going from synthetic to real data:** replace the step-3 seed with ingestion from Epic —
-**Lakeflow Connect** off Clarity/Caboodle, or HL7/FHIR feeds — landing into bronze; then wire the
-`epic_writeback_queue` to Epic (FHIR `Condition` write / HL7) with a clinician-accept step. This is the
-productionization boundary; the demo stops at the governed, approved queue.
-
-### Not yet automated (good next steps for a real handoff)
-- **Parameterize `pipeline/*.sql` + `ai_functions/*.sql`** (remove the hardcoded `slhs_test1.ckd_prod`)
-  and wrap them in a Lakeflow pipeline / job so `bundle deploy -t prod` builds the data end-to-end.
-- **Move the app's `GENIE_SPACE_ID` / catalog / schema into the DAB** so they don't need a separate
-  `app.yaml` edit.
-
-## Status
-Built incrementally and verified layer by layer. See commit history; this README tracks the design.
-
-## Deployed assets (dev target: slhs_test1.ckd_prod)
-- **Medallion**: `bronze_patient`, `bronze_lab_events`, `bronze_clinical_notes`, `silver_patient_labs`, `patient_ckd_gold`
-- **AI notes**: `note_ckd_signals`, `patient_note_signals`
-- **ML**: model `ckd_prod.ckd_stage_model` (UC), scores `patient_ckd_scored`, serving endpoint `ckd-stage-model`
-- **Semantic layer**: view `patient_ckd_analytics`, metric view `ckd_metrics`
-- **Genie agent**: "CKD Identification & Risk Flagging (Production)" — space `01f1b09e2ba113eda818aac6bf646a95`
-- **App**: `ckd-risk-worklist` → https://ckd-risk-worklist-447340683886633.13.azure.databricksapps.com
-- **Write-back queue**: `epic_writeback_queue` (human-in-the-loop → Epic integration point)
-- **Governance**: PK/FK (RELY), column comments, ABAC PHI mask on MRN (`mask_mrn`)
-- **Smoke test**: see `SMOKE_TEST.md` (11/11 passing)
-- **Demo cheat sheet**: Google Doc in the St Lukes workshop Drive folder
+Replace the generator with Lakeflow Connect from Epic Clarity (or HL7/FHIR feeds) into the same
+bronze tables; put Unity AI Gateway in front of the LLM; evaluate the notes prompt with MLflow
+against clinician-labeled notes; drain `app.epic_writeback_queue` through an Epic FHIR `Condition`
+write with a final clinician accept; add Lakehouse Monitoring on the gold and scored tables.
