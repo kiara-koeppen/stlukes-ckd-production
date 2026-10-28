@@ -1,29 +1,27 @@
 # St. Luke's: CKD Identification & Risk Flagging (end-to-end Databricks build)
 
-**Customer:** St. Luke's Health System (Boise, ID). **Who it serves:** clinical leadership (executive
-sponsor: care-gap closure, outcomes, and safe Epic write-back) and the primary-care + nephrology
-care teams (domain owners: a prioritized, explainable worklist). **Data:** 100% synthetic,
-deterministic, no PHI.
+**Customer:** St. Luke's Health System (Boise, ID). **Executive sponsor:** VP of Population Health / CMO,
+with value-based care finance (CFO) funding. **Domain owners:** primary care and nephrology. **Data:**
+100% synthetic, seeded, no PHI. **Deck:** `deck/ckd_executive_deck.md`.
 
-## The business problem
+## The outcome (2,000-patient synthetic panel, from `evidence/VALIDATION_RESULTS.md`)
 
-> CKD stages are often missing or incorrectly documented in Epic. Physicians must manually review
-> large patient populations, which is time-consuming and risks delayed intervention.
+| Finding | Patients | Clinical meaning | Financial meaning |
+|---|---|---|---|
+| CKD with no stage in the chart | **621** of 1,627 | Care gap | Diagnoses not documented or coded |
+| Undocumented, lab-evidenced stage 3+ | **497** | Unstaged, under-managed | Missing risk-adjustment HCCs (CMS-HCC V28 326-329) |
+| Stage 4/5, not seeing nephrology | **238** | Delayed referral | Crash dialysis start: ~$49K higher median 12-month cost than a planned start (AJMC 2023) |
+| Diabetic, no urine albumin test | **387** of 737 | Untested kidney damage | HEDIS KED gap (MA Star Ratings, MIPS QID 488) |
+| Normal labs, CKD only in the notes | **76** | Missed by labs-only rules | Same levers, otherwise invisible |
 
-St. Luke's asked for a solution that (1) finds patients with CKD and missing or unclear staging,
-(2) suggests the likely stage from labs and their trend, (3) flags high-risk patients for clinician
-review, and (4) cuts chart-review burden. Leadership's key concern: **writing results back to Epic**
-safely, with a clinician in the loop.
+Illustrative value per panel (assumptions in the deck): converting 10 of the 238 to planned dialysis
+starts is about $490K; prioritizing the 621 instead of reviewing all 2,000 charts saves about 115
+physician hours per review cycle.
 
-**What the build finds in the 2,000-patient synthetic panel** (from `evidence/VALIDATION_RESULTS.md`):
-
-| KPI | Patients | Why it matters |
-|---|---|---|
-| Have CKD (clinician-ascertained) | 1,627 | The population to manage |
-| **Undocumented CKD** | **621** | CKD by labs/notes but no stage in the chart: the care gap |
-| Possibly mis-staged | 527 | Documented stage disagrees with the KDIGO lab stage |
-| High risk, not seeing nephrology | 238 | G4/G5 with no nephrology relationship |
-| **Caught only by the notes** | **76** | Normal-looking labs; the AI's reading of the notes is what surfaced CKD |
+**The problem.** CKD stages are often missing or wrong in Epic, and physicians review whole panels by
+hand. St. Luke's asked to (1) find CKD with missing or unclear staging, (2) suggest the stage from labs
+and their trend, (3) flag high-risk patients, and (4) cut chart-review burden, with **nothing written
+back to Epic without clinician approval**.
 
 ## Architecture: one connected journey
 
@@ -109,10 +107,6 @@ warehouse) and run the same commands with `-t prod`.
 | `stage_endpoint` / `risk_endpoint` | `ckd-stage-model-febar` / `ckd-risk-model-febar` | Model Serving endpoints |
 | `genie_title` | `CKD Identification & Risk Flagging (FE Bar)` | Genie Agent title (the app finds it by title) |
 
-App environment (set by the bundle): `CATALOG`, `SCHEMA`, `DATABRICKS_WAREHOUSE_ID` (from the
-warehouse resource), `GENIE_SPACE_TITLE`, `CKD_RISK_ENDPOINT`, `LAKEBASE_ENDPOINT`; `PGHOST`,
-`PGDATABASE`, `PGUSER`, `PGPORT`, `PGSSLMODE` come from the app's Lakebase `postgres` resource.
-
 ## Repo structure
 
 | Path | What it is |
@@ -130,6 +124,7 @@ warehouse resource), `GENIE_SPACE_TITLE`, `CKD_RISK_ENDPOINT`, `LAKEBASE_ENDPOIN
 | `jobs/05_lakebase_and_grants.py` | Synced table, Postgres write-back queue, app service-principal grants |
 | `jobs/99_validate.py` | End-to-end checks; writes `evidence/` |
 | `app/` | Streamlit clinician worklist app |
+| `deck/ckd_executive_deck.md` | Customer deck: outcome first, clinical + financial value, assumptions and sources |
 | `BUILD.md` | How it was built: AI-assisted workflow and key decisions |
 
 ## Path to production
