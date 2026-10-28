@@ -7,7 +7,7 @@
 # MAGIC pipeline (`pipeline/ckd_lakeflow_pipeline.sql`) then ingests them with Auto Loader.
 # MAGIC
 # MAGIC **Why a generator:** there is no Epic in this environment and no real PHI may be used. The source is
-# MAGIC the synthetic CKD registry (`clinical.ckd_patient_registry`, modeled on St. Luke's de-identified
+# MAGIC the synthetic patient registry built by `00_generate_patients.py` (modeled on St. Luke's de-identified
 # MAGIC sample shape). Everything below is deterministic, so every run produces the same story:
 # MAGIC * long-form lab events (3 outpatient eGFR + creatinine per patient) plus ~10% spurious **inpatient**
 # MAGIC   eGFRs that the pipeline must exclude (KDIGO ascertainment uses outpatient labs only)
@@ -25,10 +25,9 @@
 # COMMAND ----------
 dbutils.widgets.text("catalog", "slhs_test1", "Target catalog")
 dbutils.widgets.text("schema", "ckd_febar", "Target schema")
-dbutils.widgets.text("source_registry", "slhs_test1.clinical.ckd_patient_registry", "Synthetic source registry")
 CATALOG = dbutils.widgets.get("catalog")
 SCHEMA = dbutils.widgets.get("schema")
-SOURCE = dbutils.widgets.get("source_registry")
+SOURCE = f"{CATALOG}.{SCHEMA}.source_patient_registry"   # written by 00_generate_patients.py
 LANDING = f"/Volumes/{CATALOG}/{SCHEMA}/raw_landing"
 print("target:", f"{CATALOG}.{SCHEMA}", "| source:", SOURCE, "| landing:", LANDING)
 

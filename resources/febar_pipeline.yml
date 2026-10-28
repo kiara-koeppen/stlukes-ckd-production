@@ -13,4 +13,8 @@ resources:
         schema: ${var.schema}
       libraries:
         - file:
-            path: ../pipeline/ckd_lakeflow_pipeline.sql
+            path: ../pipeline/01_bronze.sql
+        - file:
+            path: ../pipeline/02_silver.sql
+        - file:
+            path: ../pipeline/03_gold.sql

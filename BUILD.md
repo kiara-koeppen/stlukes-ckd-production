@@ -28,7 +28,7 @@ reproducible Databricks build.
 
 | Decision | Why |
 |---|---|
-| Raw extract generated **inside the workspace** into a UC volume, then ingested by Auto Loader | Keeps synthetic patient-shaped data off laptops, and mirrors how Lakeflow Connect / HL7 feeds would land in production. |
+| Patient panel generated **from scratch** by a seeded generator (`setup/00`), turned into a raw extract in a UC volume, then ingested by Auto Loader | Keeps synthetic patient-shaped data off laptops, and mirrors how Lakeflow Connect / HL7 feeds would land in production. |
 | Clinical rules as **pipeline expectations** (e.g. `outpatient_only` drops inpatient eGFRs) | The KDIGO rule becomes a visible, counted data-quality metric instead of a silent `WHERE`. |
 | MRN mask declared **in the table definitions** | Governance lives with the code; gold recomputes the MRN so a masked bronze value never propagates. |
 | Notes read by an LLM (`ai_query`), then fed into an ML model | CKD at normal eGFR needs a damage marker that often lives only in the notes. The fusion model catches cases a labs-only model misses (`caught_by_notes`). |

@@ -23,15 +23,17 @@ safely, with a clinician in the loop.
 | **Undocumented CKD** | **621** | CKD by labs/notes but no stage in the chart: the care gap |
 | Possibly mis-staged | 527 | Documented stage disagrees with the KDIGO lab stage |
 | High risk, not seeing nephrology | 238 | G4/G5 with no nephrology relationship |
-| **Caught only by the notes** | **74** | Normal-looking labs; the AI's reading of the notes is what surfaced CKD |
+| **Caught only by the notes** | **76** | Normal-looking labs; the AI's reading of the notes is what surfaced CKD |
 
 ## Architecture: one connected journey
 
 ```
- Synthetic Epic-shaped extract (patients, lab events, notes)       [setup/01_generate_raw_extract.py]
+ Seeded synthetic patient panel, generated from scratch (no PHI)     [setup/00_generate_patients.py]
+        ▼
+ Synthetic Epic-shaped extract (patients, lab events, notes)        [setup/01_generate_raw_extract.py]
         │  CSV files in a Unity Catalog volume (in prod: Lakeflow Connect off Clarity / HL7-FHIR feeds)
         ▼
- ┌─ LAKEFLOW (Spark Declarative Pipeline, serverless) ─────────────  [pipeline/ckd_lakeflow_pipeline.sql]
+ ┌─ LAKEFLOW (Spark Declarative Pipeline, serverless) ─────────────  [pipeline/01-03_*.sql]
  │  bronze_*  Auto Loader streaming tables, typed on read, expectations (valid age/sex, known analyte)
  │  silver    outpatient_only expectation drops inpatient eGFRs (KDIGO rule) → per-patient lab summary
  │  gold      patient_ckd_gold: KDIGO stage, documented-vs-lab, undocumented / mis-staged / high-risk flags
@@ -59,10 +61,10 @@ Metric View, in Genie's live answer, and in Lakebase).
 ## Execution evidence
 
 `evidence/VALIDATION_RESULTS.md` is written by the last job task against the live assets and records
-actual outputs: **21/21 checks passed**, including Lakeflow expectation metrics from the pipeline
+actual outputs: **22/22 checks passed**, including the seeded generator's patient panel, Lakeflow expectation metrics from the pipeline
 event log, the MRN mask in effect, MLflow metrics, a live serving-endpoint response, Genie's answer
-and generated SQL, Lakebase row counts and point-read latency (p95 ~5 ms), an OLTP write round-trip,
-and the app's resources and grants. `evidence/validation_results.json` has the same as JSON.
+and generated SQL, Lakebase row counts and point-read latency (p95 under 3 ms), an OLTP write round-trip,
+and the app's resources and grants.
 
 ## Prerequisites
 
@@ -70,14 +72,12 @@ and the app's resources and grants. `evidence/validation_results.json` has the s
 * Unity Catalog workspace with serverless compute, a serverless/Pro SQL warehouse, Lakebase
   Autoscaling, Databricks Apps, Model Serving, Genie, and Foundation Model APIs
   (`databricks-meta-llama-3-3-70b-instruct`)
-* The synthetic registry table `clinical.ckd_patient_registry` (generator and loader live in the
-  companion `stlukes-workshop-data` repo), or point `source_registry` at your copy
 * Permission to create schemas/volumes in the target catalog, Lakebase projects, serving endpoints, and apps
 
 ## Deploy and run
 
 ```bash
-# 1. Deploy all resources (Lakebase project, pipeline, job, app, dashboard)
+# 1. Deploy all resources (Lakebase project, pipeline, job, app)
 databricks bundle deploy -t febar
 
 # 2. Build everything end to end, in dependency order, ending with validation
@@ -87,8 +87,9 @@ databricks bundle run ckd_end_to_end -t febar
 databricks bundle run ckd_worklist_febar -t febar
 ```
 
-The job's tasks: `generate_raw_extract` → `lakeflow_pipeline` (full refresh) → `note_ai` →
-`train_and_serve_models` → `semantic_layer` → `genie_agent` → `lakebase_and_grants` → `validate`.
+The job's tasks: `generate_patients` → `generate_raw_extract` → `lakeflow_pipeline` (full refresh) →
+`note_ai` → `train_models` → `serve_models` → `semantic_layer` → `genie_agent` → `lakebase_and_grants`
+→ `validate`. The data is generated from scratch with a fixed seed, so every run tells the same story.
 Re-running is idempotent (endpoints update, Genie updates by title, the synced table re-syncs).
 
 > If `bundle deploy` fails with "openpgp: key expired", point the CLI at a local Terraform:
@@ -102,8 +103,7 @@ warehouse) and run the same commands with `-t prod`.
 | Variable | Default | Purpose |
 |---|---|---|
 | `catalog` / `schema` | `slhs_test1` / `ckd_febar` | Where every table, view, volume, function, and model lands |
-| `warehouse_id` | `9946580e2a7f4dd1` | SQL warehouse for Genie, the app, and the dashboard |
-| `source_registry` | `slhs_test1.clinical.ckd_patient_registry` | Synthetic registry the generator reads |
+| `warehouse_id` | `9946580e2a7f4dd1` | SQL warehouse for Genie and the app |
 | `lakebase_project` | `ckd-febar` | Lakebase Autoscaling project (branch `production`, db `databricks_postgres`) |
 | `app_name` | `ckd-risk-worklist-febar` | Databricks App name |
 | `stage_endpoint` / `risk_endpoint` | `ckd-stage-model-febar` / `ckd-risk-model-febar` | Model Serving endpoints |
@@ -118,18 +118,18 @@ warehouse resource), `GENIE_SPACE_TITLE`, `CKD_RISK_ENDPOINT`, `LAKEBASE_ENDPOIN
 | Path | What it is |
 |---|---|
 | `databricks.yml` | Bundle: variables and targets (`febar` default, `prod` template) |
-| `resources/` | Bundle resources: Lakebase project, Lakeflow pipeline, end-to-end job, app, dashboard |
-| `setup/01_generate_raw_extract.py` | Builds the synthetic raw extract into the landing volume; creates the MRN mask function |
-| `pipeline/ckd_lakeflow_pipeline.sql` | Lakeflow pipeline: bronze/silver/gold with expectations, keys, mask, comments |
+| `resources/` | Bundle resources: Lakebase project, Lakeflow pipeline, end-to-end job, app |
+| `setup/00_generate_patients.py` | Seeded generator: invents the 2,000-patient panel (documentation, serial labs, ground truth, meds) |
+| `setup/01_generate_raw_extract.py` | Turns the panel into a raw Epic-shaped extract (patients, lab events, notes) in the landing volume; creates the MRN mask function |
+| `pipeline/01_bronze.sql`, `02_silver.sql`, `03_gold.sql` | Lakeflow pipeline: bronze/silver/gold with expectations, keys, mask, comments |
 | `jobs/02_note_ai.py` | `ai_query` note reading → per-note and per-patient CKD-risk signals |
-| `ml/train_ckd_stage_model.py` | MLflow training, UC registration, batch scoring, Model Serving deployment |
+| `ml/train_ckd_stage_model.py` | MLflow training, UC registration, batch scoring |
+| `ml/serve_models.py` | Deploys both models to Model Serving endpoints |
 | `jobs/04_semantic_layer.py` | Analytics view, Metric View, Lakebase-ready worklist table |
 | `jobs/06_genie_space.py` + `genie/space_template.json` | Genie Agent definition (instructions, sample questions, benchmarks) |
 | `jobs/05_lakebase_and_grants.py` | Synced table, Postgres write-back queue, app service-principal grants |
 | `jobs/99_validate.py` | End-to-end checks; writes `evidence/` |
 | `app/` | Streamlit clinician worklist app |
-| `dashboard/` | AI/BI dashboard (labs + notes fusion view) |
-| `docs/` | Leadership slide, interactive walkthrough, synthetic clinical-reference PDFs |
 | `BUILD.md` | How it was built: AI-assisted workflow and key decisions |
 
 ## Path to production

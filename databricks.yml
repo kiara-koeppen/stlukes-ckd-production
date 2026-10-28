@@ -18,9 +18,6 @@ variables:
   warehouse_id:
     description: A serverless / Pro SQL warehouse for SQL steps, the dashboard, and the app.
     default: 9946580e2a7f4dd1
-  source_registry:
-    description: Synthetic CKD registry the raw-extract generator reads (no PHI).
-    default: slhs_test1.clinical.ckd_patient_registry
   lakebase_project:
     description: Lakebase Autoscaling project id (operational Postgres for the app).
     default: ckd-febar
@@ -53,7 +50,6 @@ targets:
 
   # ---- Template for deploying in YOUR OWN workspace (e.g. St. Luke's) ----
   # Fill in the four placeholders below, then: databricks bundle deploy -t prod
-  # Also set source_registry if your synthetic registry lives elsewhere.
   prod:
     mode: production
     workspace:

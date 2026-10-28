@@ -3,7 +3,7 @@
 # MAGIC # 99 - End-to-end validation (execution evidence)
 # MAGIC
 # MAGIC Every check runs against the LIVE assets this job just built and records its actual output.
-# MAGIC Results are written as text (markdown + JSON) to the `evidence` volume and committed to the repo
+# MAGIC Results are written as text (markdown, plus a JSON copy) to the `evidence` volume; the markdown is committed to the repo
 # MAGIC under `evidence/`, so a reviewer can read what ran without screenshots. Any failed check fails
 # MAGIC the job.
 # MAGIC
@@ -45,6 +45,13 @@ def one(sql):
 # MAGIC ## Layer 1 - Lakeflow ingest, medallion, and data-quality expectations
 
 # COMMAND ----------
+src = one(f"""SELECT count(*) n,
+  sum(CASE WHEN actual_ckd_stage IN ('CKD 3a','CKD 3b','CKD 4','CKD 5') AND documented_ckd IN ('No','None') THEN 1 ELSE 0 END) care_gap,
+  sum(CASE WHEN actual_ckd_stage IN ('CKD 4','CKD 5') AND NOT sees_nephrology THEN 1 ELSE 0 END) high_risk
+  FROM {S}.source_patient_registry""")
+check("Synthetic data", "Seeded generator built the source patient panel in this run", src.n == 2000 and src.care_gap > 0,
+      f"source_patient_registry={src.n} patients, planted care-gap={src.care_gap}, stage 4/5 without nephrology={src.high_risk}")
+
 c = one(f"""SELECT (SELECT count(*) FROM {S}.bronze_patient) p, (SELECT count(*) FROM {S}.bronze_lab_events) l,
   (SELECT count(*) FROM {S}.bronze_clinical_notes) n, (SELECT count(*) FROM {S}.silver_lab_events) sl,
   (SELECT count(*) FROM {S}.silver_patient_labs) sp, (SELECT count(*) FROM {S}.patient_ckd_gold) g,

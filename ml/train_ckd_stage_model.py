@@ -4,11 +4,11 @@
 # MAGIC Trains a classifier that suggests the clinician-assigned KDIGO stage from lab values and
 # MAGIC **trends over time** (per Yutong's ask: "suggest likely CKD stage based on labs and trends").
 # MAGIC Logs to MLflow, registers to Unity Catalog Model Registry, evaluates vs the clinician stage,
-# MAGIC and batch-scores every patient into `ckd_prod.patient_ckd_scored`. A serving endpoint (created
-# MAGIC separately) exposes it for real-time scoring from the App.
+# MAGIC and batch-scores every patient into `patient_ckd_scored`. `serve_models.py` (the next job task)
+# MAGIC deploys both models to Model Serving for real-time scoring from the App.
 
 # COMMAND ----------
-dbutils.widgets.text("catalog", "slhs_test1"); dbutils.widgets.text("schema", "ckd_prod")
+dbutils.widgets.text("catalog", "slhs_test1"); dbutils.widgets.text("schema", "ckd_febar")
 CATALOG = dbutils.widgets.get("catalog"); SCHEMA = dbutils.widgets.get("schema")
 MODEL = f"{CATALOG}.{SCHEMA}.ckd_stage_model"
 
@@ -125,37 +125,3 @@ out = spark.createDataFrame(rdf[["patient_id","ckd_risk_score","ckd_risk_pred","
 out.write.mode("overwrite").option("overwriteSchema","true").saveAsTable(f"{CATALOG}.{SCHEMA}.patient_ckd_risk_scored")
 spark.sql(f"ALTER TABLE {CATALOG}.{SCHEMA}.patient_ckd_risk_scored SET TBLPROPERTIES ('comment'='Fusion CKD-risk: score/pred from labs+AI notes signal, labs-only comparison, and caught_by_notes (labs missed, notes caught).')")
 print("wrote", f"{CATALOG}.{SCHEMA}.patient_ckd_risk_scored", out.count(), "| caught_by_notes:", int(rdf["caught_by_notes"].sum()))
-
-# COMMAND ----------
-# MAGIC %md
-# MAGIC ## Serve both models (Model Serving, scale-to-zero)
-# MAGIC The App calls the fusion risk model in real time ("score this pasted note"), and the stage model
-# MAGIC backs on-demand stage suggestions. Each endpoint is created on first run and updated to the newest
-# MAGIC registered version afterwards, so re-running the job redeploys cleanly.
-
-# COMMAND ----------
-from datetime import timedelta
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.serving import EndpointCoreConfigInput, ServedEntityInput
-from mlflow.tracking import MlflowClient
-
-dbutils.widgets.text("stage_endpoint", "ckd-stage-model-febar")
-dbutils.widgets.text("risk_endpoint", "ckd-risk-model-febar")
-w = WorkspaceClient(); mc = MlflowClient()
-
-def latest_version(name):
-    return str(max(int(v.version) for v in mc.search_model_versions(f"name='{name}'")))
-
-def deploy(endpoint, model):
-    entity = ServedEntityInput(entity_name=model, entity_version=latest_version(model),
-                               workload_size="Small", scale_to_zero_enabled=True)
-    existing = {e.name for e in w.serving_endpoints.list()}
-    if endpoint in existing:
-        w.serving_endpoints.update_config_and_wait(endpoint, served_entities=[entity], timeout=timedelta(minutes=45))
-    else:
-        w.serving_endpoints.create_and_wait(endpoint, config=EndpointCoreConfigInput(name=endpoint, served_entities=[entity]),
-                                            timeout=timedelta(minutes=45))
-    print("endpoint", endpoint, "->", model, "v" + entity.entity_version, w.serving_endpoints.get(endpoint).state.ready)
-
-deploy(dbutils.widgets.get("stage_endpoint"), MODEL)
-deploy(dbutils.widgets.get("risk_endpoint"), RISK_MODEL)

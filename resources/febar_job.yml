@@ -3,7 +3,7 @@
 resources:
   jobs:
     ckd_end_to_end:
-      name: "[${bundle.target}] CKD end-to-end: Lakeflow -> AI -> ML -> semantic -> Genie -> Lakebase -> validate"
+      name: "[${bundle.target}] CKD end-to-end: synthetic EHR -> Lakeflow -> AI -> ML -> semantic -> Genie -> Lakebase -> validate"
       max_concurrent_runs: 1
       parameters:
         - name: catalog
@@ -11,11 +11,14 @@ resources:
         - name: schema
           default: ${var.schema}
       tasks:
+        - task_key: generate_patients
+          notebook_task:
+            notebook_path: ../setup/00_generate_patients.py
+
         - task_key: generate_raw_extract
+          depends_on: [{task_key: generate_patients}]
           notebook_task:
             notebook_path: ../setup/01_generate_raw_extract.py
-            base_parameters:
-              source_registry: ${var.source_registry}
 
         - task_key: lakeflow_pipeline
           depends_on: [{task_key: generate_raw_extract}]
@@ -28,16 +31,21 @@ resources:
           notebook_task:
             notebook_path: ../jobs/02_note_ai.py
 
-        - task_key: train_and_serve_models
+        - task_key: train_models
           depends_on: [{task_key: note_ai}]
           notebook_task:
             notebook_path: ../ml/train_ckd_stage_model.py
+
+        - task_key: serve_models
+          depends_on: [{task_key: train_models}]
+          notebook_task:
+            notebook_path: ../ml/serve_models.py
             base_parameters:
               stage_endpoint: ${var.stage_endpoint}
               risk_endpoint: ${var.risk_endpoint}
 
         - task_key: semantic_layer
-          depends_on: [{task_key: train_and_serve_models}]
+          depends_on: [{task_key: serve_models}]
           notebook_task:
             notebook_path: ../jobs/04_semantic_layer.py
 
